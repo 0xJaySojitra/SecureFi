@@ -61,8 +61,8 @@ contract SecurityRouter is AccessControl {
         string name;
         string metadataURI;
         address owner;
-        bool approved;
         uint256 registeredEpoch;
+        uint256 approvedEpoch; // The epoch in which the project was approved (0 if not approved)
     }
     
     struct BugReport {
@@ -142,16 +142,17 @@ contract SecurityRouter is AccessControl {
         string memory name,
         string memory metadataURI
     ) external returns (uint256) {
+        require(bytes(name).length > 0, "Name required");
+        require(bytes(metadataURI).length > 0, "Metadata URI required");
+        require(projectCount < type(uint256).max, "Too many projects");
         projectCount++;
-        
         projects[projectCount] = Project({
             name: name,
             metadataURI: metadataURI,
             owner: msg.sender,
-            approved: false,
-            registeredEpoch: currentEpoch
+            registeredEpoch: currentEpoch,
+            approvedEpoch: 0
         });
-        
         emit ProjectRegistered(projectCount, name, msg.sender);
         return projectCount;
     }
@@ -160,9 +161,9 @@ contract SecurityRouter is AccessControl {
         external 
         onlyRole(CANTINA_ROLE) 
     {
-        require(!projects[projectId].approved, "Already approved");
-        projects[projectId].approved = true;
-        
+        require(projectId > 0 && projectId <= projectCount, "Invalid projectId");
+        require(projects[projectId].approvedEpoch == 0, "Already approved");
+        projects[projectId].approvedEpoch = currentEpoch; // Mark the epoch in which it was approved
         emit ProjectApproved(projectId);
     }
     
@@ -184,16 +185,13 @@ contract SecurityRouter is AccessControl {
             block.timestamp >= epochStartTime + EPOCH_DURATION,
             "Epoch not finished"
         );
-        
         // Step 1: Trigger strategy report to mint new donation shares
         // The keeper should have already called report() on the strategy before this,
         // but we document it here for clarity of the flow
         // Note: report() must be called externally by keeper BEFORE advanceEpoch()
-        
         // Step 2: Redeem all accumulated strategy shares for underlying assets
         uint256 shares = yieldStrategy.balanceOf(address(this));
         uint256 yieldAmount = 0;
-        
         if (shares > 0) {
             // Redeem shares to get underlying asset (USDC)
             // This triggers _freeFunds in the strategy, withdrawing from Aave vault
@@ -203,63 +201,78 @@ contract SecurityRouter is AccessControl {
                 address(this)   // owner of shares
             );
         }
-        
         // Step 3: Record epoch data
-        uint256 approvedCount = _countApprovedProjects();
-        
+        uint256 approvedCount = _countApprovedProjectsForEpoch(currentEpoch);
+
         epochs[currentEpoch] = EpochData({
             totalYield: yieldAmount,
             totalProjects: approvedCount,
             distributedAmount: 0,
             finalized: false
         });
-        
         // Step 4: Advance epoch
         currentEpoch++;
         epochStartTime = block.timestamp;
-        
         emit EpochAdvanced(currentEpoch, yieldAmount);
     }
     
     // ============ BUG REPORTING & PAYOUT ============
     
     /**
-     * @notice Submits bug reports for a project and distributes rewards
-     * @dev Called by Cantina after reviewing bug reports for a project in a completed epoch
+     * @notice Submits bug reports for multiple projects and distributes rewards
+     * @dev Called by Cantina after reviewing bug reports for multiple projects in a completed epoch
+     *      Optimized to distribute yield only among participating projects
      * @param epoch The epoch number for which bugs were reported
-     * @param projectId The project ID that was audited
-     * @param reports Array of bug report submissions with severity and reporter info
+     * @param projectReports Array of ProjectReportSubmission containing projectId and their respective bug reports
      * @param signature Cantina's signature verifying the report batch
      */
     function submitBugReports(
         uint256 epoch,
-        uint256 projectId,
-        BugReportSubmission[] calldata reports,
+        ProjectReportSubmission[] calldata projectReports,
         bytes calldata signature
     ) external onlyRole(CANTINA_ROLE) {
         require(epoch < currentEpoch, "Epoch not finalized");
-        require(projects[projectId].approved, "Project not approved");
         require(!epochs[epoch].finalized, "Epoch already distributed");
         require(epochs[epoch].totalYield > 0, "No yield for epoch");
+        require(projectReports.length > 0, "No project reports provided");
         
         // Verify signature (Cantina signs the report batch)
-        _verifyCantinaSignature(epoch, projectId, reports, signature);
+        _verifyCantinaSignature(epoch, projectReports, signature);
         
-        // Calculate yield allocation for this project
-        uint256 projectYield = epochs[epoch].totalYield / epochs[epoch].totalProjects;
+        // Calculate yield allocation per project (divide among participating projects only)
+        uint256 projectYield = epochs[epoch].totalYield / projectReports.length;
         
-        // Calculate severity weights
+        // Process reports for each project
+        for (uint256 p; p < projectReports.length;) {
+            _processProjectReports(epoch, projectReports[p], projectYield);
+            unchecked { ++p; }
+        }
+    }
+    
+    /**
+     * @dev Internal function to process bug reports for a single project
+     *      Separated to avoid stack too deep errors
+     */
+    function _processProjectReports(
+        uint256 epoch,
+        ProjectReportSubmission calldata projectReport,
+        uint256 projectYield
+    ) internal {
+        uint256 projectId = projectReport.projectId;
+        BugReportSubmission[] calldata reports = projectReport.reports;
+        
+    require(projects[projectId].approvedEpoch > 0 && projects[projectId].approvedEpoch <= epoch, "Project not approved for this epoch");
+        require(reports.length > 0, "No reports for project");
+        
+        // Calculate severity weights for this project
         uint256 totalWeight = _calculateTotalWeight(reports);
         require(totalWeight > 0, "No valid reports");
         
         // Distribute to each reporter
-        for (uint256 i = 0; i < reports.length; i++) {
-            uint256 weight = _getSeverityWeight(reports[i].severity);
-            uint256 payout = (projectYield * weight) / totalWeight;
-            
-            // Transfer underlying asset (USDC) to reporter using SafeERC20
+        for (uint256 i; i < reports.length;) {
+            uint256 payout = (projectYield * _getSeverityWeight(reports[i].severity)) / totalWeight;
+            // Transfer underlying asset (USDC) to reporter
             IERC20(address(asset)).safeTransfer(reports[i].reporter, payout);
-            
             // Record bug report
             epochProjectReports[epoch][projectId].push(BugReport({
                 reportId: reports[i].reportId,
@@ -268,10 +281,8 @@ contract SecurityRouter is AccessControl {
                 paid: true,
                 amount: payout
             }));
-            
             // Track distributed amount
             epochs[epoch].distributedAmount += payout;
-            
             emit BugPayoutExecuted(
                 epoch,
                 projectId,
@@ -279,6 +290,7 @@ contract SecurityRouter is AccessControl {
                 payout,
                 reports[i].severity
             );
+            unchecked { ++i; }
         }
     }
     
@@ -316,24 +328,25 @@ contract SecurityRouter is AccessControl {
         return total;
     }
     
-    function _countApprovedProjects() internal view returns (uint256) {
+    // Returns the number of projects approved for a given epoch (approvedEpoch > 0 and <= epoch)
+    function _countApprovedProjectsForEpoch(uint256 epoch) internal view returns (uint256) {
         uint256 count = 0;
         for (uint256 i = 1; i <= projectCount; i++) {
-            if (projects[i].approved) count++;
+            if (projects[i].approvedEpoch > 0 && projects[i].approvedEpoch <= epoch) {
+                count++;
+            }
         }
         return count;
     }
     
     function _verifyCantinaSignature(
         uint256 epoch,
-        uint256 projectId,
-        BugReportSubmission[] calldata reports,
+        ProjectReportSubmission[] calldata projectReports,
         bytes calldata signature
     ) internal view {
         bytes32 messageHash = keccak256(abi.encode(
             epoch,
-            projectId,
-            reports
+            projectReports
         ));
         
         bytes32 ethSignedHash = keccak256(abi.encodePacked(
@@ -424,4 +437,13 @@ struct BugReportSubmission {
     bytes32 reportId;
     address reporter;
     SecurityRouter.Severity severity;
+}
+
+/**
+ * @notice Helper struct for grouping multiple bug reports by project
+ * @dev Used to submit bug reports for multiple projects in a single transaction
+ */
+struct ProjectReportSubmission {
+    uint256 projectId;
+    BugReportSubmission[] reports;
 }
