@@ -2,11 +2,26 @@
 pragma solidity ^0.8.25;
 
 import {BaseStrategy} from "@octant-core/core/BaseStrategy.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-// todo implement IYieldSource interface
-interface IYieldSource {}
+/// @notice Thrown when deposit amount exceeds vault limit
+error DepositExceedsVaultLimit();
+
+// ERC4626 interface for Aave Vault integration
+interface IERC4626 {
+    function deposit(uint256 assets, address receiver) external returns (uint256);
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256);
+    function asset() external view returns (address);
+    function totalAssets() external view returns (uint256);
+    function convertToShares(uint256 assets) external view returns (uint256);
+    function convertToAssets(uint256 shares) external view returns (uint256);
+    function maxDeposit(address receiver) external view returns (uint256);
+    function maxWithdraw(address owner) external view returns (uint256);
+    function previewDeposit(uint256 assets) external view returns (uint256);
+    function previewWithdraw(uint256 assets) external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+}
 
 /**
  * @title YieldDonating Strategy Template
@@ -20,10 +35,10 @@ interface IYieldSource {}
  *      onlyEmergencyAuthorized and onlyKeepers modifiers
  */
 contract YieldDonatingStrategy is BaseStrategy {
-    using SafeERC20 for ERC20;
+    using SafeERC20 for IERC20;
 
-    /// @notice Address of the yield source (e.g., Aave pool, Compound, Yearn vault)
-    IYieldSource public immutable yieldSource;
+    /// @notice Address of the ERC4626 vault (Aave Vault)
+    IERC4626 public immutable YIELD_SOURCE;
 
     /**
      * @param _asset Address of the underlying asset
@@ -57,10 +72,10 @@ contract YieldDonatingStrategy is BaseStrategy {
             _tokenizedStrategyAddress
         )
     {
-        yieldSource = IYieldSource(_yieldSource);
+        YIELD_SOURCE = IERC4626(_yieldSource);
 
         // max allow Yield source to withdraw assets
-        ERC20(_asset).forceApprove(_yieldSource, type(uint256).max);
+        IERC20(_asset).forceApprove(_yieldSource, type(uint256).max);
 
         // TokenizedStrategy initialization will be handled separately
         // This is just a template - the actual initialization depends on
@@ -83,11 +98,17 @@ contract YieldDonatingStrategy is BaseStrategy {
      * to deploy.
      */
     function _deployFunds(uint256 _amount) internal override {
-        // TODO: implement your logic to deploy funds into yield source
-        // Example for AAVE:
-        // yieldSource.supply(address(asset), _amount, address(this), 0);
-        // Example for ERC4626 vault:
-        // IERC4626(compounderVault).deposit(_amount, address(this));
+        // Deploy funds to the Aave ERC4626 vault
+        if (_amount > 0) {
+            // Check if the vault can accept this deposit
+            uint256 maxDeposit = YIELD_SOURCE.maxDeposit(address(this));
+            if (_amount > maxDeposit) {
+                revert DepositExceedsVaultLimit();
+            }
+            
+            // Deposit assets into the ERC4626 vault and receive shares
+            YIELD_SOURCE.deposit(_amount, address(this));
+        }
     }
 
     /**
@@ -112,12 +133,19 @@ contract YieldDonatingStrategy is BaseStrategy {
      * @param _amount, The amount of 'asset' to be freed.
      */
     function _freeFunds(uint256 _amount) internal override {
-        // TODO: implement your logic to free funds from yield source
-        // Example for AAVE:
-        // yieldSource.withdraw(address(asset), _amount, address(this));
-        // Example for ERC4626 vault:
-        // uint256 shares = IERC4626(compounderVault).convertToShares(_amount);
-        // IERC4626(compounderVault).redeem(shares, address(this), address(this));
+        // Free funds from the Aave ERC4626 vault
+        if (_amount > 0) {
+            // Check how much we can withdraw
+            uint256 maxWithdraw = YIELD_SOURCE.maxWithdraw(address(this));
+            
+            // Limit withdrawal to what's available
+            uint256 amountToWithdraw = _amount > maxWithdraw ? maxWithdraw : _amount;
+            
+            if (amountToWithdraw > 0) {
+                // Withdraw assets from the ERC4626 vault
+                YIELD_SOURCE.withdraw(amountToWithdraw, address(this), address(this));
+            }
+        }
     }
 
     /**
@@ -143,10 +171,27 @@ contract YieldDonatingStrategy is BaseStrategy {
      * amount of 'asset' the strategy currently holds including idle funds.
      */
     function _harvestAndReport() internal override returns (uint256 _totalAssets) {
-        // TODO: Implement harvesting logic
-        // 1. Amount of assets claimable from the yield source
-        // 2. Amount of assets idle in the strategy
-        // 3. Return the total (assets claimable + assets idle)
+        // Calculate total assets held by the strategy
+        
+        // 1. Get idle assets (assets sitting in the strategy contract)
+        uint256 idleAssets = IERC20(asset).balanceOf(address(this));
+        
+        // 2. Get assets deployed in the Aave ERC4626 vault
+        uint256 sharesBalance = YIELD_SOURCE.balanceOf(address(this));
+        uint256 deployedAssets = 0;
+        
+        if (sharesBalance > 0) {
+            // Convert shares to underlying assets
+            deployedAssets = YIELD_SOURCE.convertToAssets(sharesBalance);
+        }
+        
+        // 3. Return total assets (idle + deployed)
+        _totalAssets = idleAssets + deployedAssets;
+        
+        // Note: In a more complex implementation, you might also:
+        // - Claim any additional rewards from the vault
+        // - Compound rewards back into the vault
+        // - Handle any yield that should be donated to the donation address
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -226,5 +271,7 @@ contract YieldDonatingStrategy is BaseStrategy {
      *
      * @param _amount The amount of asset to attempt to free.
      */
-    function _emergencyWithdraw(uint256 _amount) internal virtual override {}
+    function _emergencyWithdraw(uint256 _amount) internal virtual override {
+        _freeFunds(_amount);
+    }
 }

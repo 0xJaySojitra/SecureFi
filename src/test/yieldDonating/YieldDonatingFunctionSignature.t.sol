@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
-import {YieldDonatingSetup as Setup, ERC20, IStrategyInterface} from "./YieldDonatingSetup.sol";
+import {YieldDonatingSetup as Setup, IERC20Metadata, IStrategyInterface} from "./YieldDonatingSetup.sol";
 
 contract YieldDonatingFunctionSignatureTest is Setup {
     function setUp() public virtual override {
@@ -63,7 +63,7 @@ contract YieldDonatingFunctionSignatureTest is Setup {
         vm.stopPrank();
 
         // Mint some shares to the user
-        airdrop(ERC20(address(strategy)), user, wad);
+        airdrop(IERC20Metadata(address(strategy)), user, wad);
         assertEq(strategy.balanceOf(address(user)), wad, "balance");
         vm.prank(user);
         strategy.transfer(keeper, wad);

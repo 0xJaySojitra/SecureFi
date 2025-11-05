@@ -1,7 +1,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
-import {YieldDonatingSetup as Setup, ERC20, IStrategyInterface} from "./YieldDonatingSetup.sol";
+import {YieldDonatingSetup as Setup, IERC20Metadata, IStrategyInterface} from "./YieldDonatingSetup.sol";
 
 contract YieldDonatingShutdownTest is Setup {
     function setUp() public virtual override {

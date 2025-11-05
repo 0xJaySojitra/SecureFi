@@ -4,7 +4,9 @@ pragma solidity ^0.8.25;
 import "forge-std/console2.sol";
 import {Test} from "forge-std/Test.sol";
 
-import {YieldDonatingStrategy as Strategy, ERC20} from "../../strategies/yieldDonating/YieldDonatingStrategy.sol";
+import {YieldDonatingStrategy as Strategy} from "../../strategies/yieldDonating/YieldDonatingStrategy.sol";
+import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import {YieldDonatingStrategyFactory as StrategyFactory} from "../../strategies/yieldDonating/YieldDonatingStrategyFactory.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
 import {ITokenizedStrategy} from "@octant-core/core/interfaces/ITokenizedStrategy.sol";
@@ -15,7 +17,7 @@ import {YieldDonatingTokenizedStrategy} from "@octant-core/strategies/yieldDonat
 
 contract YieldDonatingSetup is Test, IEvents {
     // Contract instances that we will use repeatedly.
-    ERC20 public asset;
+    IERC20Metadata public asset;
     IStrategyInterface public strategy;
 
     StrategyFactory public strategyFactory;
@@ -49,7 +51,7 @@ contract YieldDonatingSetup is Test, IEvents {
         require(testAssetAddress != address(0), "TEST_ASSET_ADDRESS not set in .env");
 
         // Set asset
-        asset = ERC20(testAssetAddress);
+        asset = IERC20Metadata(testAssetAddress);
 
         // Set decimals
         decimals = asset.decimals();
@@ -125,7 +127,7 @@ contract YieldDonatingSetup is Test, IEvents {
         uint256 _totalIdle
     ) public {
         uint256 _assets = _strategy.totalAssets();
-        uint256 _balance = ERC20(_strategy.asset()).balanceOf(address(_strategy));
+        uint256 _balance = IERC20(_strategy.asset()).balanceOf(address(_strategy));
         uint256 _idle = _balance > _assets ? _assets : _balance;
         uint256 _debt = _assets - _idle;
         assertEq(_assets, _totalAssets, "!totalAssets");
@@ -134,7 +136,7 @@ contract YieldDonatingSetup is Test, IEvents {
         assertEq(_totalAssets, _totalDebt + _totalIdle, "!Added");
     }
 
-    function airdrop(ERC20 _asset, address _to, uint256 _amount) public {
+    function airdrop(IERC20Metadata _asset, address _to, uint256 _amount) public {
         uint256 balanceBefore = _asset.balanceOf(_to);
         deal(address(_asset), _to, balanceBefore + _amount);
     }
