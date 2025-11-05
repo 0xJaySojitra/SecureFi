@@ -46,10 +46,10 @@ contract SecurityRouter is AccessControl {
     
     /// @notice The YieldDonatingStrategy contract (ERC4626-compliant)
     /// @dev This is the strategy that mints donation shares to this router
-    IERC4626Strategy public immutable yieldStrategy;
+    IERC4626Strategy public immutable YIELD_STRATEGY;
     
     /// @notice The underlying asset (e.g., USDC)
-    IERC20Metadata public immutable asset;
+    IERC20Metadata public immutable ASSET;
     
     uint256 public constant EPOCH_DURATION = 30 days;
     uint256 public epochStartTime;
@@ -59,7 +59,7 @@ contract SecurityRouter is AccessControl {
     
     struct Project {
         string name;
-        string metadataURI;
+        string metadata;
         address owner;
         uint256 registeredEpoch;
         uint256 approvedEpoch; // The epoch in which the project was approved (0 if not approved)
@@ -124,8 +124,8 @@ contract SecurityRouter is AccessControl {
         address _admin,
         address _keeper
     ) {
-        yieldStrategy = IERC4626Strategy(_yieldStrategy);
-        asset = IERC20Metadata(yieldStrategy.asset());
+        YIELD_STRATEGY = IERC4626Strategy(_yieldStrategy);
+        ASSET = IERC20Metadata(YIELD_STRATEGY.asset());
         
         _grantRole(CANTINA_ROLE, _cantinaOperator);
         _grantRole(ADMIN_ROLE, _admin);
@@ -140,15 +140,15 @@ contract SecurityRouter is AccessControl {
     
     function registerProject(
         string memory name,
-        string memory metadataURI
+        string memory metadata
     ) external returns (uint256) {
         require(bytes(name).length > 0, "Name required");
-        require(bytes(metadataURI).length > 0, "Metadata URI required");
+        require(bytes(metadata).length > 0, "Metadata URI required");
         require(projectCount < type(uint256).max, "Too many projects");
         projectCount++;
         projects[projectCount] = Project({
             name: name,
-            metadataURI: metadataURI,
+            metadata: metadata,
             owner: msg.sender,
             registeredEpoch: currentEpoch,
             approvedEpoch: 0
@@ -190,12 +190,12 @@ contract SecurityRouter is AccessControl {
         // but we document it here for clarity of the flow
         // Note: report() must be called externally by keeper BEFORE advanceEpoch()
         // Step 2: Redeem all accumulated strategy shares for underlying assets
-        uint256 shares = yieldStrategy.balanceOf(address(this));
+        uint256 shares = YIELD_STRATEGY.balanceOf(address(this));
         uint256 yieldAmount = 0;
         if (shares > 0) {
             // Redeem shares to get underlying asset (USDC)
             // This triggers _freeFunds in the strategy, withdrawing from Aave vault
-            yieldAmount = yieldStrategy.redeem(
+            yieldAmount = YIELD_STRATEGY.redeem(
                 shares,
                 address(this),  // receiver of assets
                 address(this)   // owner of shares
@@ -272,7 +272,7 @@ contract SecurityRouter is AccessControl {
         for (uint256 i; i < reports.length;) {
             uint256 payout = (projectYield * _getSeverityWeight(reports[i].severity)) / totalWeight;
             // Transfer underlying asset (USDC) to reporter
-            IERC20(address(asset)).safeTransfer(reports[i].reporter, payout);
+            IERC20(address(ASSET)).safeTransfer(reports[i].reporter, payout);
             // Record bug report
             epochProjectReports[epoch][projectId].push(BugReport({
                 reportId: reports[i].reportId,
@@ -344,15 +344,19 @@ contract SecurityRouter is AccessControl {
         ProjectReportSubmission[] calldata projectReports,
         bytes calldata signature
     ) internal view {
-        bytes32 messageHash = keccak256(abi.encode(
-            epoch,
-            projectReports
-        ));
+        bytes32 messageHash;
+        bytes memory encoded = abi.encode(epoch, projectReports);
+        assembly {
+            messageHash := keccak256(add(encoded, 0x20), mload(encoded))
+        }
         
-        bytes32 ethSignedHash = keccak256(abi.encodePacked(
-            "\x19Ethereum Signed Message:\n32",
-            messageHash
-        ));
+        bytes32 ethSignedHash;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, "\x19Ethereum Signed Message:\n32")
+            mstore(add(ptr, 28), messageHash)
+            ethSignedHash := keccak256(ptr, 60)
+        }
         
         address signer = _recoverSigner(ethSignedHash, signature);
         require(hasRole(CANTINA_ROLE, signer), "Invalid signature");
@@ -392,7 +396,7 @@ contract SecurityRouter is AccessControl {
      * @return The number of strategy shares held by this router
      */
     function getAccumulatedShares() external view returns (uint256) {
-        return yieldStrategy.balanceOf(address(this));
+        return YIELD_STRATEGY.balanceOf(address(this));
     }
     
     /**
@@ -401,9 +405,9 @@ contract SecurityRouter is AccessControl {
      * @return The asset value of shares held by this router
      */
     function getAccumulatedAssetValue() external view returns (uint256) {
-        uint256 shares = yieldStrategy.balanceOf(address(this));
+        uint256 shares = YIELD_STRATEGY.balanceOf(address(this));
         if (shares == 0) return 0;
-        return yieldStrategy.convertToAssets(shares);
+        return YIELD_STRATEGY.convertToAssets(shares);
     }
     
     /**
@@ -417,7 +421,7 @@ contract SecurityRouter is AccessControl {
      * @return loss The amount of loss detected (if any)
      */
     function triggerStrategyReport() external onlyRole(KEEPER_ROLE) returns (uint256 profit, uint256 loss) {
-        return yieldStrategy.report();
+        return YIELD_STRATEGY.report();
     }
     
     function getProjectReports(uint256 epoch, uint256 projectId)
