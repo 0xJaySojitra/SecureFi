@@ -52,8 +52,11 @@ contract SecurityRouter is AccessControl {
     IERC20Metadata public ASSET;
     
     uint256 public constant EPOCH_DURATION = 30 days;
+    uint256 public constant TOTAL_CAP_PERCENTAGE = 2500; // 25% in basis points (25% = 2500/10000)
+    uint256 public constant MAX_ISSUE_PERCENTAGE = 500; // 5% in basis points (5% = 500/10000)
     uint256 public epochStartTime;
     uint256 public currentEpoch;
+    uint256 public totalAvailableFunds; // Accumulated funds including rollovers
     
     // ============ STRUCTS ============
     
@@ -85,6 +88,7 @@ contract SecurityRouter is AccessControl {
         uint256 totalYield;
         uint256 totalProjects;
         uint256 distributedAmount;
+        uint256 rolloverAmount; // Amount carried over from previous epochs
         bool finalized;
     }
     
@@ -234,16 +238,28 @@ contract SecurityRouter is AccessControl {
                 address(this)   // owner of shares
             );
         }
-        // Step 3: Record epoch data
+        // Step 3: Calculate rollover from previous epoch
+        uint256 rolloverAmount = 0;
+        if (currentEpoch > 0) {
+            EpochData storage prevEpoch = epochs[currentEpoch - 1];
+            if (prevEpoch.totalYield + prevEpoch.rolloverAmount > prevEpoch.distributedAmount) {
+                rolloverAmount = (prevEpoch.totalYield + prevEpoch.rolloverAmount) - prevEpoch.distributedAmount;
+            }
+        }
+        
+        // Step 4: Record epoch data with rollover
         uint256 approvedCount = _countApprovedProjectsForEpoch(currentEpoch);
+        totalAvailableFunds = yieldAmount + rolloverAmount;
 
         epochs[currentEpoch] = EpochData({
             totalYield: yieldAmount,
             totalProjects: approvedCount,
             distributedAmount: 0,
+            rolloverAmount: rolloverAmount,
             finalized: false
         });
-        // Step 4: Advance epoch
+        
+        // Step 5: Advance epoch
         currentEpoch++;
         epochStartTime = block.timestamp;
         emit EpochAdvanced(currentEpoch, yieldAmount);
@@ -252,107 +268,115 @@ contract SecurityRouter is AccessControl {
     // ============ BUG REPORTING & PAYOUT ============
     
     /**
-     * @notice Submits bug reports for multiple projects and distributes rewards
-     * @dev Called by Cantina after reviewing bug reports for multiple projects in a completed epoch
-     *      Optimized to distribute yield only among participating projects
-     * @param epoch The epoch number for which bugs were reported
+     * @notice Submits bug reports and distributes rewards with 5% cap per issue
+     * @dev Called by Cantina after reviewing bug reports. Can submit for any approved project
+     *      regardless of which epoch they were approved in. Uses current available funds pool.
      * @param projectReports Array of ProjectReportSubmission containing projectId and their respective bug reports
      * @param signature Cantina's signature verifying the report batch
      */
     function submitBugReports(
-        uint256 epoch,
         ProjectReportSubmission[] calldata projectReports,
         bytes calldata signature
     ) external onlyRole(CANTINA_ROLE) {
-        require(epoch < currentEpoch, "Epoch not finalized");
-        require(!epochs[epoch].finalized, "Epoch already distributed");
-        require(epochs[epoch].totalYield > 0, "No yield for epoch");
         require(projectReports.length > 0, "No project reports provided");
+        require(totalAvailableFunds > 0, "No funds available for distribution");
         
         // Verify signature (Cantina signs the report batch)
-        _verifyCantinaSignature(epoch, projectReports, signature);
+        _verifyCantinaSignature(projectReports, signature);
         
-        // Calculate yield allocation per project with remainder handling
-        uint256 totalYield = epochs[epoch].totalYield;
-        uint256 numProjects = projectReports.length;
-        uint256 baseProjectYield = totalYield / numProjects;
-        uint256 remainder = totalYield % numProjects;
+        // Calculate global severity weight across all projects
+        uint256 globalTotalWeight = _calculateGlobalWeight(projectReports);
+        require(globalTotalWeight > 0, "No valid reports globally");
+        
+        // Calculate 25% cap pool for proportional distribution
+        uint256 totalCapPool = (totalAvailableFunds * TOTAL_CAP_PERCENTAGE) / 10000;
+        
+        // Calculate yield allocation per project (divide among participating projects only)
+        uint256 projectYield = totalAvailableFunds / projectReports.length;
         
         // Process reports for each project
         for (uint256 p; p < projectReports.length;) {
-            // Give remainder to first projects (fair distribution of dust)
-            uint256 projectYield = baseProjectYield;
-            if (p < remainder) {
-                projectYield += 1;
-            }
-            
-            _processProjectReports(epoch, projectReports[p], projectYield);
+            _processProjectReportsWithProportionalCap(
+                projectReports[p], 
+                projectYield, 
+                totalCapPool, 
+                globalTotalWeight
+            );
             unchecked { ++p; }
         }
+        
+        // Update totalAvailableFunds after distribution
+        totalAvailableFunds = ASSET.balanceOf(address(this));
     }
     
     /**
-     * @dev Internal function to process bug reports for a single project
-     *      Separated to avoid stack too deep errors
+     * @dev Internal function to process bug reports with proportional cap distribution
+     *      Uses hybrid approach: severity-based formula with proportional cap from 5% pool
      */
-    function _processProjectReports(
-        uint256 epoch,
+    function _processProjectReportsWithProportionalCap(
         ProjectReportSubmission calldata projectReport,
-        uint256 projectYield
+        uint256 projectYield,
+        uint256 totalCapPool,
+        uint256 globalTotalWeight
     ) internal {
         uint256 projectId = projectReport.projectId;
         BugReportSubmission[] calldata reports = projectReport.reports;
         
-    require(projects[projectId].approvedEpoch > 0 && projects[projectId].approvedEpoch <= epoch, "Project not approved for this epoch");
+        require(projects[projectId].approvedEpoch > 0, "Project not approved");
         require(reports.length > 0, "No reports for project");
         
         // Calculate severity weights for this project
-        uint256 totalWeight = _calculateTotalWeight(reports);
-        require(totalWeight > 0, "No valid reports");
+        uint256 projectTotalWeight = _calculateTotalWeight(reports);
+        require(projectTotalWeight > 0, "No valid reports");
         
-        // Calculate base payouts and track remainder
-        uint256 totalDistributed = 0;
-        uint256[] memory payouts = new uint256[](reports.length);
-        
-        // First pass: calculate base payouts
+        // Distribute to each reporter using hybrid approach with per-issue cap
         for (uint256 i; i < reports.length;) {
-            payouts[i] = (projectYield * _getSeverityWeight(reports[i].severity)) / totalWeight;
-            totalDistributed += payouts[i];
-            unchecked { ++i; }
-        }
-        
-        // Distribute remainder to reports in order (simple and fair)
-        uint256 remainder = projectYield - totalDistributed;
-        for (uint256 i; i < reports.length && remainder > 0;) {
-            payouts[i] += 1;
-            remainder--;
-            unchecked { ++i; }
-        }
-        
-        // Distribute payouts to reporters
-        for (uint256 i; i < reports.length;) {
-            uint256 payout = payouts[i];
-            require(payout > 0, "Payout cannot be zero");
+            uint256 severityWeight = _getSeverityWeight(reports[i].severity);
             
-            // Transfer underlying asset (USDC) to reporter
-            IERC20(address(ASSET)).safeTransfer(reports[i].reporter, payout);
-            // Record bug report
-            epochProjectReports[epoch][projectId].push(BugReport({
-                reportId: reports[i].reportId,
-                reporter: reports[i].reporter,
-                severity: reports[i].severity,
-                paid: true,
-                amount: payout
-            }));
-            // Track distributed amount
-            epochs[epoch].distributedAmount += payout;
-            emit BugPayoutExecuted(
-                epoch,
-                projectId,
-                reports[i].reporter,
-                payout,
-                reports[i].severity
-            );
+            // Step 1: Calculate reward using original severity-based formula
+            uint256 severityBasedPayout = (projectYield * severityWeight) / projectTotalWeight;
+            
+            // Step 2: Calculate proportional cap from 25% pool
+            uint256 proportionalCap = (totalCapPool * severityWeight) / globalTotalWeight;
+            
+            // Step 3: Calculate 5% per-issue cap
+            uint256 maxPerIssueCap = (totalAvailableFunds * MAX_ISSUE_PERCENTAGE) / 10000;
+            
+            // Step 4: Take minimum of all three: severity-based, proportional cap, and per-issue cap
+            uint256 payout = severityBasedPayout;
+            if (proportionalCap < payout) payout = proportionalCap;
+            if (maxPerIssueCap < payout) payout = maxPerIssueCap;
+            
+            // Step 5: Ensure we don't exceed available funds
+            uint256 currentBalance = ASSET.balanceOf(address(this));
+            if (payout > currentBalance) {
+                payout = currentBalance;
+            }
+            
+            if (payout > 0) {
+                // Transfer underlying asset (USDC) to reporter
+                IERC20(address(ASSET)).safeTransfer(reports[i].reporter, payout);
+                
+                // Record bug report in current epoch
+                epochProjectReports[currentEpoch - 1][projectId].push(BugReport({
+                    reportId: reports[i].reportId,
+                    reporter: reports[i].reporter,
+                    severity: reports[i].severity,
+                    paid: true,
+                    amount: payout
+                }));
+                
+                // Track distributed amount in current epoch
+                epochs[currentEpoch - 1].distributedAmount += payout;
+                
+                emit BugPayoutExecuted(
+                    currentEpoch - 1,
+                    projectId,
+                    reports[i].reporter,
+                    payout,
+                    reports[i].severity
+                );
+            }
             unchecked { ++i; }
         }
     }
@@ -391,6 +415,18 @@ contract SecurityRouter is AccessControl {
         return total;
     }
     
+    function _calculateGlobalWeight(ProjectReportSubmission[] calldata projectReports)
+        internal
+        pure
+        returns (uint256)
+    {
+        uint256 globalTotal = 0;
+        for (uint256 p = 0; p < projectReports.length; p++) {
+            globalTotal += _calculateTotalWeight(projectReports[p].reports);
+        }
+        return globalTotal;
+    }
+    
     // Returns the number of projects approved for a given epoch (approvedEpoch > 0 and <= epoch)
     function _countApprovedProjectsForEpoch(uint256 epoch) internal view returns (uint256) {
         uint256 count = 0;
@@ -403,12 +439,11 @@ contract SecurityRouter is AccessControl {
     }
     
     function _verifyCantinaSignature(
-        uint256 epoch,
         ProjectReportSubmission[] calldata projectReports,
         bytes calldata signature
     ) internal view {
         bytes32 messageHash;
-        bytes memory encoded = abi.encode(epoch, projectReports);
+        bytes memory encoded = abi.encode(projectReports);
         assembly {
             messageHash := keccak256(add(encoded, 0x20), mload(encoded))
         }
@@ -475,12 +510,49 @@ contract SecurityRouter is AccessControl {
         return YIELD_STRATEGY.convertToAssets(shares);
     }
     
+    
     function getProjectReports(uint256 epoch, uint256 projectId)
         external
         view
         returns (BugReport[] memory)
     {
         return epochProjectReports[epoch][projectId];
+    }
+    
+    /**
+     * @notice Get current available funds for distribution (including rollover)
+     * @return Total available funds for bug bounty distribution
+     */
+    function getAvailableFunds() external view returns (uint256) {
+        return totalAvailableFunds;
+    }
+    
+    /**
+     * @notice Get total cap pool (25% of available funds)
+     * @return Total pool available for proportional distribution
+     */
+    function getTotalCapPool() external view returns (uint256) {
+        return (totalAvailableFunds * TOTAL_CAP_PERCENTAGE) / 10000;
+    }
+    
+    /**
+     * @notice Get maximum payout per individual issue (5% of available funds)
+     * @return Maximum payout amount per individual issue
+     */
+    function getMaxPayoutPerIssue() external view returns (uint256) {
+        return (totalAvailableFunds * MAX_ISSUE_PERCENTAGE) / 10000;
+    }
+    
+    /**
+     * @notice Get proportional cap for a specific severity
+     * @param severity The bug severity
+     * @param globalWeight Total weight of all reports across all projects
+     * @return Proportional cap for this severity from the 25% pool
+     */
+    function getProportionalCap(Severity severity, uint256 globalWeight) external view returns (uint256) {
+        if (globalWeight == 0) return 0;
+        uint256 totalCapPool = (totalAvailableFunds * TOTAL_CAP_PERCENTAGE) / 10000;
+        return (totalCapPool * _getSeverityWeight(severity)) / globalWeight;
     }
 }
 

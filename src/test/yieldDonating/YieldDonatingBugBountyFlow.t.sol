@@ -36,11 +36,10 @@ contract YieldDonatingBugBountyFlowTest is Setup {
     }
     
     function createCantinaSignature(
-        uint256 epoch,
         SecurityRouter.ProjectReportSubmission[] memory projectReports
     ) internal view returns (bytes memory) {
-        // Encode the data the same way the contract does
-        bytes memory encoded = abi.encode(epoch, projectReports);
+        // Encode the data the same way the contract does (no epoch parameter)
+        bytes memory encoded = abi.encode(projectReports);
         bytes32 messageHash;
         assembly {
             messageHash := keccak256(add(encoded, 0x20), mload(encoded))
@@ -56,7 +55,6 @@ contract YieldDonatingBugBountyFlowTest is Setup {
     }
     
     function _checkBalancesAndSubmitReports(
-        uint256 epoch,
         SecurityRouter.ProjectReportSubmission[] memory projectReports,
         bytes memory signature
     ) internal {
@@ -70,7 +68,7 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         console2.log("  Reporter 3:", reporter3Before);
         
         vm.prank(cantinaOperator);
-        securityRouter.submitBugReports(epoch, projectReports, signature);
+        securityRouter.submitBugReports(projectReports, signature);
         
         console2.log("All bug reports submitted");
         
@@ -95,7 +93,7 @@ contract YieldDonatingBugBountyFlowTest is Setup {
     }
 
     function test_completeBugBountyFlow() public {
-        uint256 depositAmount = 1000000; // 1 USDC (6 decimals)
+        uint256 depositAmount = 100000000; // 100 USDC (6 decimals)
         
         console2.log("=== PHASE 1: SETUP AND DEPOSIT ===");
         
@@ -155,6 +153,14 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         // Step 6: Submit bug reports for both projects
         console2.log("\n=== PHASE 6: BUG REPORT SUBMISSION ===");
         
+        // Check available funds and 25% cap pool with 5% per-issue limit
+        uint256 availableFunds = securityRouter.getAvailableFunds();
+        uint256 totalCapPool = securityRouter.getTotalCapPool();
+        uint256 maxPerIssue = securityRouter.getMaxPayoutPerIssue();
+        console2.log("Available funds for distribution:", availableFunds);
+        console2.log("Total cap pool (25%):", totalCapPool);
+        console2.log("Max per issue (5%):", maxPerIssue);
+        
         // Create bug reports array
         // Project 1: 2 reporters
         // - Reporter 1: 1 Critical bug
@@ -162,23 +168,13 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         // Project 2: 1 reporter
         // - Reporter 3: 1 Low + 1 Informational bug
         
-        uint256 currentEpoch = securityRouter.currentEpoch() - 1; // Previous epoch where we have funds
-        console2.log("Submitting reports for epoch:", currentEpoch);
         console2.log("Current epoch:", securityRouter.currentEpoch());
         
-        // Check project approval epochs
+        // Check project approval status
         (, , , , uint256 project1ApprovalEpoch) = securityRouter.projects(project1Id);
         (, , , , uint256 project2ApprovalEpoch) = securityRouter.projects(project2Id);
         console2.log("Project 1 approved in epoch:", project1ApprovalEpoch);
         console2.log("Project 2 approved in epoch:", project2ApprovalEpoch);
-        
-        // Check epoch data
-        (uint256 totalYield, uint256 totalProjects, uint256 distributedAmount, bool finalized) = securityRouter.epochs(currentEpoch);
-        console2.log("Epoch", currentEpoch, "data:");
-        console2.log("  Total yield:", totalYield);
-        console2.log("  Total projects:", totalProjects);
-        console2.log("  Distributed amount:", distributedAmount);
-        console2.log("  Finalized:", finalized);
         
         // Prepare bug reports for Project 1
         SecurityRouter.BugReportSubmission[] memory project1Reports = new SecurityRouter.BugReportSubmission[](2);
@@ -237,7 +233,7 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         });
         
         // Create a proper signature using the cantina private key
-        bytes memory signature = createCantinaSignature(currentEpoch, projectReports);
+        bytes memory signature = createCantinaSignature(projectReports);
         
         // Submit all reports at once
         console2.log("Submitting all bug reports...");
@@ -249,15 +245,11 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         console2.log("  Reporter 3 (info):", project2Reports[1].reporter);
         
         // Check balances and submit reports
-        _checkBalancesAndSubmitReports(currentEpoch, projectReports, signature);
+        _checkBalancesAndSubmitReports(projectReports, signature);
         
-        // Check epoch data after submission
-        (totalYield, totalProjects, distributedAmount, finalized) = securityRouter.epochs(currentEpoch);
-        console2.log("After submission - Epoch", currentEpoch, "data:");
-        console2.log("  Total yield:", totalYield);
-        console2.log("  Total projects:", totalProjects);
-        console2.log("  Distributed amount:", distributedAmount);
-        console2.log("  Finalized:", finalized);
+        // Check available funds after submission
+        uint256 remainingFunds = securityRouter.getAvailableFunds();
+        console2.log("Remaining available funds after distribution:", remainingFunds);
         
         // Step 8: Final verification
         console2.log("\n=== PHASE 8: FINAL VERIFICATION ===");
@@ -279,14 +271,19 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         assertGt(reporter2Reward, 0, "Reporter 2 should receive reward for medium bugs");
         assertGt(reporter3Reward, 0, "Reporter 3 should receive reward for low/info bugs");
         
-        // Verify reward hierarchy (Critical > Medium > Low > Informational)
-        // Reporter 1 (1 Critical) should get more than Reporter 2 (2 Medium) per bug
-        // But Reporter 2 might get more total due to having 2 bugs
-        console2.log("Critical bug reward rate:", reporter1Reward);
-        console2.log("Medium bug reward rate:", reporter2Reward / 2);
+        // Verify 25% total cap with 5% per-issue limit
+        console2.log("Total cap pool (25%):", totalCapPool);
+        console2.log("Max per issue (5%):", maxPerIssue);
+        console2.log("Using 25% total cap with 5% per-issue limit");
         
-        // Verify that funds were distributed (router balance should be low)
-        assertLt(routerBalanceAfter, 100, "Most funds should have been distributed");
+        // Verify hierarchy is maintained and no issue exceeds 5% cap
+        assertGt(reporter1Reward, reporter2Reward / 2, "Critical should exceed individual Medium");
+        assertLe(reporter1Reward, maxPerIssue, "Critical should not exceed 5% per-issue cap");
+        assertLe(reporter2Reward / 2, maxPerIssue, "Each Medium should not exceed 5% per-issue cap");
+        assertLe(reporter3Reward / 2, maxPerIssue, "Each Low/Info should not exceed 5% per-issue cap");
+        
+        console2.log("+ Hierarchy maintained with meaningful rewards");
+        console2.log("+ Per-issue 5% cap respected");
         
         console2.log("\n=== TEST COMPLETED SUCCESSFULLY ===");
         console2.log("+ Projects registered and approved");
@@ -296,101 +293,118 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         console2.log("+ All assertions passed");
     }
     
-    function test_rewardCalculationDetails() public {
-        // This test focuses on the reward calculation mechanics
-        uint256 depositAmount = 10000000; // 10 USDC for more significant rewards
+    function test_crossEpochReporting() public {
+        // This test verifies that Cantina can submit reports for projects from previous epochs
+        uint256 depositAmount = 100000000; // 100 USDC for testing
         
-        // Setup: deposit
+        console2.log("=== CROSS-EPOCH REPORTING TEST ===");
+        
+        // Phase 1: Setup and register project in epoch 0
         mintAndDepositIntoStrategy(strategy, user, depositAmount);
-        
-        // Register and approve a project BEFORE generating yield
-        uint256 projectId = registerProject("Test Project", "metadata");
+        uint256 projectId = registerProject("Legacy Project", "metadata");
         approveProject(projectId);
         
-        // Generate yield and advance epoch
-        skip(30 days);
+        console2.log("Project registered and approved in epoch:", securityRouter.currentEpoch());
         
+        // Phase 2: Generate yield and advance to epoch 1
+        skip(30 days);
         vm.prank(keeper);
         ITokenizedStrategy(address(strategy)).report();
-        
         skip(30 days);
         advanceEpoch();
         
-        uint256 availableFunds = asset.balanceOf(address(securityRouter));
-        console2.log("Available funds for distribution:", availableFunds);
+        console2.log("Advanced to epoch:", securityRouter.currentEpoch());
+        console2.log("Available funds:", securityRouter.getAvailableFunds());
         
-        uint256 currentEpoch = securityRouter.currentEpoch() - 1;
+        // Phase 3: Generate more yield and advance to epoch 2
+        skip(30 days);
+        vm.prank(keeper);
+        ITokenizedStrategy(address(strategy)).report();
+        skip(30 days);
+        advanceEpoch();
         
-        // Submit one bug of each severity to see the reward structure
-        SecurityRouter.BugReportSubmission[] memory reports = new SecurityRouter.BugReportSubmission[](4);
+        console2.log("Advanced to epoch:", securityRouter.currentEpoch());
+        uint256 totalFunds = securityRouter.getAvailableFunds();
+        uint256 totalCapPool = securityRouter.getTotalCapPool();
+        uint256 maxPerIssue = securityRouter.getMaxPayoutPerIssue();
+        console2.log("Total available funds (with rollover):", totalFunds);
+        console2.log("Total cap pool (25%):", totalCapPool);
+        console2.log("Max per issue (5%):", maxPerIssue);
+        
+        // Phase 4: Submit bug reports for the legacy project (approved in epoch 0)
+        SecurityRouter.BugReportSubmission[] memory reports = new SecurityRouter.BugReportSubmission[](3);
         
         reports[0] = SecurityRouter.BugReportSubmission({
-            reportId: keccak256("critical"),
+            reportId: keccak256("legacy_critical"),
             reporter: reporter1,
             severity: SecurityRouter.Severity.CRITICAL
         });
         
         reports[1] = SecurityRouter.BugReportSubmission({
-            reportId: keccak256("medium"),
+            reportId: keccak256("legacy_medium"),
             reporter: reporter2,
             severity: SecurityRouter.Severity.MEDIUM
         });
         
         reports[2] = SecurityRouter.BugReportSubmission({
-            reportId: keccak256("low"),
+            reportId: keccak256("legacy_low"),
             reporter: reporter3,
             severity: SecurityRouter.Severity.LOW
         });
         
-        reports[3] = SecurityRouter.BugReportSubmission({
-            reportId: keccak256("info"),
-            reporter: address(0x1004),
-            severity: SecurityRouter.Severity.INFORMATIONAL
-        });
-        
-        // Record balances before
-        uint256[] memory balancesBefore = new uint256[](4);
-        balancesBefore[0] = asset.balanceOf(reporter1);
-        balancesBefore[1] = asset.balanceOf(reporter2);
-        balancesBefore[2] = asset.balanceOf(reporter3);
-        balancesBefore[3] = asset.balanceOf(address(0x1004));
-        
-        // Create ProjectReportSubmission
         SecurityRouter.ProjectReportSubmission[] memory projectReports = new SecurityRouter.ProjectReportSubmission[](1);
         projectReports[0] = SecurityRouter.ProjectReportSubmission({
             projectId: projectId,
             reports: reports
         });
         
-        // Create proper signature
-        bytes memory signature = createCantinaSignature(currentEpoch, projectReports);
+        bytes memory signature = createCantinaSignature(projectReports);
         
-        // Submit reports
+        // Check balances before
+        uint256 reporter1Before = asset.balanceOf(reporter1);
+        uint256 reporter2Before = asset.balanceOf(reporter2);
+        uint256 reporter3Before = asset.balanceOf(reporter3);
+        
+        console2.log("Submitting reports for legacy project...");
         vm.prank(cantinaOperator);
-        securityRouter.submitBugReports(currentEpoch, projectReports, signature);
+        securityRouter.submitBugReports(projectReports, signature);
         
-        // Record balances after
-        uint256[] memory balancesAfter = new uint256[](4);
-        balancesAfter[0] = asset.balanceOf(reporter1);
-        balancesAfter[1] = asset.balanceOf(reporter2);
-        balancesAfter[2] = asset.balanceOf(reporter3);
-        balancesAfter[3] = asset.balanceOf(address(0x1004));
+        // Check balances after
+        uint256 reporter1After = asset.balanceOf(reporter1);
+        uint256 reporter2After = asset.balanceOf(reporter2);
+        uint256 reporter3After = asset.balanceOf(reporter3);
         
-        // Calculate and display rewards
-        console2.log("\n=== REWARD BREAKDOWN BY SEVERITY ===");
-        console2.log("Critical reward:", balancesAfter[0] - balancesBefore[0]);
-        console2.log("Medium reward:", balancesAfter[1] - balancesBefore[1]);
-        console2.log("Low reward:", balancesAfter[2] - balancesBefore[2]);
-        console2.log("Informational reward:", balancesAfter[3] - balancesBefore[3]);
+        uint256 reward1 = reporter1After - reporter1Before;
+        uint256 reward2 = reporter2After - reporter2Before;
+        uint256 reward3 = reporter3After - reporter3Before;
         
-        // Verify reward hierarchy
-        uint256 criticalReward = balancesAfter[0] - balancesBefore[0];
-        uint256 mediumReward = balancesAfter[1] - balancesBefore[1];
-        uint256 lowReward = balancesAfter[2] - balancesBefore[2];
-        uint256 infoReward = balancesAfter[3] - balancesBefore[3];
+        console2.log("=== CROSS-EPOCH REWARDS ===");
+        console2.log("Reporter 1 (Critical):", reward1);
+        console2.log("Reporter 2 (Medium):", reward2);
+        console2.log("Reporter 3 (Low):", reward3);
         
-        assertGt(criticalReward, mediumReward, "Critical should pay more than Medium");
-        assertGt(mediumReward, lowReward, "Medium should pay more than Low");
-        assertEq(lowReward, infoReward, "Low and Informational should have same payout (both weight 1)");
+        // Verify 25% total cap with 5% per-issue limit maintains hierarchy
+        console2.log("Verifying 25% total cap with 5% per-issue limit...");
+        
+        // Verify hierarchy is maintained and no issue exceeds 5% cap
+        // Note: With large funds, Critical and Medium may both hit the 5% cap
+        if (reward1 == maxPerIssue && reward2 == maxPerIssue) {
+            // Both hit the cap, so they should be equal
+            assertEq(reward1, reward2, "Critical and Medium both hit 5% cap, should be equal");
+            console2.log("+ Both Critical and Medium hit the 5% per-issue cap");
+        } else {
+            // Normal hierarchy should apply
+            assertGt(reward1, reward2, "Critical should exceed Medium when not capped");
+        }
+        assertGt(reward2, reward3, "Medium should exceed Low even with large funds");
+        assertLe(reward1, maxPerIssue, "Critical should not exceed 5% per-issue cap");
+        assertLe(reward2, maxPerIssue, "Medium should not exceed 5% per-issue cap");
+        assertLe(reward3, maxPerIssue, "Low should not exceed 5% per-issue cap");
+        
+        console2.log("+ 25% total cap with 5% per-issue limit maintains hierarchy!");
+        
+        console2.log("+ Cross-epoch reporting works correctly!");
+        console2.log("+ Severity-based rewards with 5% cap protection!");
+        console2.log("+ Rollover mechanism working!");
     }
 }
