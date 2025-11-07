@@ -1,14 +1,22 @@
-# YieldDonating Strategy Development Guide for Octant
+# YieldDonating Strategy with SecurityRouter - Bug Bounty Rewards System
 
-This repository provides a template for creating **YieldDonating strategies** compatible with Octant's ecosystem using [Foundry](https://book.getfoundry.sh/). YieldDonating strategies donate all generated yield to a donation address.
+This project implements a **YieldDonating Strategy** that integrates with a **SecurityRouter** to create an innovative bug bounty rewards system. The strategy generates yield from ERC4626 vaults (Spark Vault) and donates 100% of profits to fund security bug bounties through Cantina integration.
 
-## What is a YieldDonating Strategy?
+## 🎯 Project Overview
 
-YieldDonating strategies are designed to:
-- Deploy assets into external yield sources (Aave, Compound, Yearn vaults, etc.)
-- Harvest yield and donate 100% of profits to public goods funding
-- Optionally protect users from losses by burning dragonRouter shares
-- Charge NO performance fees to users
+### What This System Does:
+- **YieldDonating Strategy**: Deploys USDC into Spark Vault to generate yield
+- **SecurityRouter**: Acts as the "dragonRouter" to receive donated yield and distribute bug bounty rewards
+- **Cantina Integration**: Connects with Cantina for project approval and bug report verification
+- **Automated Rewards**: Distributes rewards to security researchers based on bug severity
+- **Rollover Mechanism**: Unused funds carry over to the next epoch for larger reward pools
+
+### Key Features:
+- **25% Total Cap**: Uses 25% of available funds for monthly distribution
+- **5% Per-Issue Cap**: No single bug can receive more than 5% of total available funds
+- **Severity-Based Rewards**: Critical > High > Medium > Low > Informational
+- **Cross-Epoch Support**: Projects can receive reports regardless of registration epoch
+- **Loss Protection**: Optional burning of dragonRouter shares to protect users
 
 ## Getting Started
 
@@ -32,217 +40,222 @@ forge soldeer install
 1. Copy `.env.example` to `.env`
 2. Set the required environment variables:
 ```env
-# Required for testing
+# Required for testing - Spark Vault Integration
 TEST_ASSET_ADDRESS=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  # USDC on mainnet
-TEST_YIELD_SOURCE=0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2   # Your yield source address
+TEST_YIELD_SOURCE=0x28B3a8fb53B741A8Fd78c0fb9A6B2393d896a43d   # Spark Vault address
 
-# RPC URLs
-ETH_RPC_URL=https://mainnet.infura.io/v3/YOUR_INFURA_API_KEY  # Get your key from infura.io
+# RPC URLs (Required for fork testing)
+ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_API_KEY
 ```
 
-## Strategy Development Step-by-Step
+3. Get your Alchemy API key from [alchemy.com](https://alchemy.com) for mainnet forking
 
-### 1. Understanding the Template Structure
+## 🏗️ System Architecture
 
-The YieldDonating strategy template (`src/strategies/yieldDonating/YieldDonatingStrategy.sol`) contains:
-- **Constructor parameters** you need to provide
-- **Mandatory functions** (marked with TODO) you MUST implement
-- **Optional functions** you can override if needed
-- **Built-in functionality** for profit donation and loss protection
+### Core Components
 
-### 2. Define Your Yield Source Interface
+#### 1. YieldDonatingStrategy (`src/strategies/yieldDonating/YieldDonatingStrategy.sol`)
+- **Purpose**: Generates yield by depositing USDC into Spark Vault (ERC4626)
+- **Key Functions**:
+  - `_deployFunds()`: Deposits USDC into Spark Vault
+  - `_freeFunds()`: Withdraws USDC from Spark Vault
+  - `_harvestAndReport()`: Reports total assets and triggers profit minting
+  - `availableDepositLimit()` & `availableWithdrawLimit()`: Manages deposit/withdrawal limits
 
-First, implement the `IYieldSource` interface for your specific protocol:
+#### 2. SecurityRouter (`src/router/SecurityRouter.sol`)
+- **Purpose**: Acts as "dragonRouter" to receive donated yield and distribute bug bounty rewards
+- **Key Features**:
+  - **Project Management**: Registration and approval by Cantina
+  - **Epoch System**: Monthly cycles for yield collection and distribution
+  - **Reward Distribution**: 25% total cap with 5% per-issue limit
+  - **Cantina Integration**: Signature verification for bug reports
+  - **Rollover Mechanism**: Unused funds carry over to next epoch
 
+#### 3. Reward Distribution Formula
 ```solidity
-// TODO: Replace with your yield source interface
-interface IYieldSource {
-    // Example for Aave V3:
-    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
-    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
-    
-    // Example for ERC4626 vaults:
-    function deposit(uint256 assets, address receiver) external returns (uint256);
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256);
-    function convertToAssets(uint256 shares) external view returns (uint256);
-}
+// Constants
+TOTAL_CAP_PERCENTAGE = 2500;  // 25% of available funds
+MAX_ISSUE_PERCENTAGE = 500;   // 5% per individual issue
+
+// For each bug report
+severityBasedPayout = (projectYield * severityWeight) / projectTotalWeight;
+proportionalCap = (totalCapPool * severityWeight) / globalTotalWeight;
+maxPerIssue = (totalAvailableFunds * 500) / 10000;
+finalPayout = min(severityBasedPayout, proportionalCap, maxPerIssue);
 ```
 
-### 3. Implement Mandatory Functions
+### Severity Weights
+- **Critical**: 5 points
+- **High**: 3 points  
+- **Medium**: 2 points
+- **Low**: 1 point
+- **Informational**: 1 point
 
-You MUST implement these three core functions:
+## 🧪 Testing the System
 
-#### A. `_deployFunds(uint256 _amount)`
-Deploy assets into your yield source:
-```solidity
-function _deployFunds(uint256 _amount) internal override {
-    // Example for Aave:
-    yieldSource.supply(address(asset), _amount, address(this), 0);
-    
-    // Example for ERC4626:
-    // IERC4626(address(yieldSource)).deposit(_amount, address(this));
-}
-```
-
-#### B. `_freeFunds(uint256 _amount)`
-Withdraw assets from your yield source:
-```solidity
-function _freeFunds(uint256 _amount) internal override {
-    // Example for Aave:
-    yieldSource.withdraw(address(asset), _amount, address(this));
-    
-    // Example for ERC4626:
-    // uint256 shares = IERC4626(address(yieldSource)).convertToShares(_amount);
-    // IERC4626(address(yieldSource)).redeem(shares, address(this), address(this));
-}
-```
-
-#### C. `_harvestAndReport()`
-Calculate total assets held by the strategy:
-```solidity
-function _harvestAndReport() internal override returns (uint256 _totalAssets) {
-    // 1. Get assets deployed in yield source
-    uint256 deployedAssets = yieldSource.balanceOf(address(this));
-    
-    // 2. Get idle assets in strategy
-    uint256 idleAssets = asset.balanceOf(address(this));
-    
-    // 3. Return total (MUST include both deployed and idle)
-    _totalAssets = deployedAssets + idleAssets;
-    
-    // Note: Profit/loss is calculated automatically by comparing
-    // with previous totalAssets. Profits are minted to dragonRouter.
-}
-```
-
-### 4. Optional Functions
-
-Override these functions based on your strategy's needs:
-
-#### `availableDepositLimit(address _owner)`
-Implement deposit limits if needed:
-```solidity
-function availableDepositLimit(address) public view override returns (uint256) {
-    // Example: Cap at protocol's lending capacity
-    uint256 protocolCapacity = yieldSource.availableCapacity();
-    return protocolCapacity;
-}
-```
-
-#### `availableWithdrawLimit(address _owner)`
-Implement withdrawal limits:
-```solidity
-function availableWithdrawLimit(address) public view override returns (uint256) {
-    // Example: Limited by protocol's available liquidity
-    return yieldSource.availableLiquidity();
-}
-```
-
-#### `_emergencyWithdraw(uint256 _amount)`
-Emergency withdrawal logic when strategy is shutdown:
-```solidity
-function _emergencyWithdraw(uint256 _amount) internal override {
-    // Force withdraw from yield source
-    yieldSource.emergencyWithdraw(_amount);
-}
-```
-
-#### `_tend(uint256 _totalIdle)` and `_tendTrigger()`
-For maintenance between reports:
-```solidity
-function _tend(uint256 _totalIdle) internal override {
-    // Example: Deploy idle funds if above threshold
-    if (_totalIdle > minDeployAmount) {
-        _deployFunds(_totalIdle);
-    }
-}
-
-function _tendTrigger() internal view override returns (bool) {
-    // Return true when tend should be called
-    return asset.balanceOf(address(this)) > minDeployAmount;
-}
-```
-
-### 5. Constructor Parameters
-
-When deploying your strategy, provide these parameters:
-- `_yieldSource`: Address of your yield protocol (Aave, Compound, etc.)
-- `_asset`: The token to be managed (USDC, DAI, etc.)
-- `_name`: Your strategy name (e.g., "USDC Aave YieldDonating")
-- `_management`: Address that can configure the strategy
-- `_keeper`: Address that can call report() and tend()
-- `_emergencyAdmin`: Address that can shutdown the strategy
-- `_donationAddress`: The dragonRouter address (receives minted profit shares)
-- `_enableBurning`: Whether to enable loss protection via share burning
-- `_tokenizedStrategyAddress`: YieldDonatingTokenizedStrategy implementation
-
-## Testing Your Strategy
-
-### 1. Update Test Configuration
-
-Modify `src/test/yieldDonating/YieldDonatingSetup.sol`:
-- Set your yield source interface and mock
-- Adjust test parameters as needed
-
-### 2. Run Tests
+### Quick Start Testing
 
 ```sh
-# Run all YieldDonating tests
+# Run all tests (requires mainnet fork)
 make test
 
-# Run specific test file
-make test-contract contract=YieldDonatingOperation
-
-# Run with traces for debugging
-make trace
+# Run specific test suites
+forge test --match-contract YieldDonatingOperation -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingShutdown -vv --fork-url $ETH_RPC_URL
 ```
 
-### 3. Key Test Scenarios
+### Test Suites Overview
 
-Your tests should verify:
-- ✅ Assets are correctly deployed to yield source
-- ✅ Withdrawals work for various amounts
-- ✅ Profits are minted to dragonRouter (not kept by strategy)
-- ✅ Losses trigger dragonRouter share burning (if enabled)
-- ✅ Emergency withdrawals work when shutdown
-- ✅ Deposit/withdraw limits are enforced
+#### 1. **YieldDonatingOperation.t.sol**
+Tests basic strategy functionality:
+- ✅ USDC deposit/withdrawal from Spark Vault
+- ✅ Yield generation and profit minting to SecurityRouter
+- ✅ Deposit/withdrawal limits enforcement
 
-## Common Implementation Examples
+#### 2. **YieldDonatingBugBountyFlow.t.sol** 
+Tests complete bug bounty flow:
+- ✅ Project registration and Cantina approval
+- ✅ Yield generation and epoch advancement
+- ✅ Bug report submission with different severities
+- ✅ Reward distribution with 25% total cap + 5% per-issue limit
+- ✅ Cross-epoch reporting and rollover mechanism
 
+#### 3. **YieldDonatingShutdown.t.sol**
+Tests emergency scenarios:
+- ✅ Emergency withdrawal functionality
+- ✅ Strategy shutdown procedures
+- ✅ Asset recovery mechanisms
 
-### ERC4626 Vault Strategy
+### Key Test Results
+
+**Normal Fund Pool (362K USDC)**:
+- Critical bug: 18,121 USDC (hits 5% cap)
+- Medium bugs: 16,474 USDC each
+- Low/Info bugs: 8,237 USDC each
+- Total distributed: 67,543 USDC (18.6%)
+- Remaining for rollover: 294,894 USDC
+
+**Large Fund Pool (1.09M USDC with rollover)**:
+- Critical bug: 54,497 USDC (hits 5% cap)
+- Medium bug: 54,497 USDC (hits 5% cap)
+- Low bug: 34,060 USDC (proportional)
+- Demonstrates cap protection and hierarchy maintenance
+
+## 🚀 End-to-End Flow
+
+### 1. **User Deposits USDC**
+```
+User → YieldDonatingStrategy → Spark Vault
+```
+- Users deposit USDC into the YieldDonatingStrategy
+- Strategy automatically deploys funds to Spark Vault for yield generation
+
+### 2. **Yield Generation & Collection**
+```
+Spark Vault → YieldDonatingStrategy → SecurityRouter (as shares)
+```
+- Keeper calls `report()` monthly to harvest yield
+- Profits are minted as strategy shares to SecurityRouter
+- SecurityRouter redeems shares for underlying USDC
+
+### 3. **Project Registration & Approval**
+```
+Project → SecurityRouter → Cantina (approval) → SecurityRouter
+```
+- Projects register with metadata and funding goals
+- Cantina reviews and approves worthy projects
+- Only approved projects are eligible for bug bounty funding
+
+### 4. **Bug Discovery & Reporting**
+```
+Security Researcher → Cantina → SecurityRouter (with signature)
+```
+- Researchers find bugs and report to Cantina
+- Cantina verifies reports and submits to SecurityRouter with cryptographic signature
+- Reports can be submitted for any approved project regardless of epoch
+
+### 5. **Reward Distribution**
+```
+SecurityRouter → Security Researchers (USDC rewards)
+```
+- At epoch end, SecurityRouter distributes rewards based on:
+  - **25% total cap** of available funds
+  - **5% per-issue cap** to prevent single bug from draining funds
+  - **Severity-based hierarchy** (Critical > Medium > Low > Info)
+- Unused funds rollover to next epoch for larger reward pools
+
+## 🔧 Deployment Guide
+
+### Prerequisites
+- Deployed Octant V2 core contracts
+- Spark Vault integration
+- Cantina partnership for project approval
+
+### Deployment Steps
+
+1. **Deploy SecurityRouter**
 ```solidity
-function _deployFunds(uint256 _amount) internal override {
-    IERC4626(address(yieldSource)).deposit(_amount, address(this));
-}
-
-function _harvestAndReport() internal override returns (uint256 _totalAssets) {
-    uint256 shares = IERC4626(address(yieldSource)).balanceOf(address(this));
-    uint256 vaultAssets = IERC4626(address(yieldSource)).convertToAssets(shares);
-    uint256 idleAssets = asset.balanceOf(address(this));
-    
-    _totalAssets = vaultAssets + idleAssets;
-}
+SecurityRouter securityRouter = new SecurityRouter(
+    USDC_ADDRESS,           // asset
+    admin,                  // admin role
+    keeper,                 // keeper role  
+    cantinaOperator        // cantina role
+);
 ```
 
-## Deployment Checklist
+2. **Deploy YieldDonatingStrategy**
+```solidity
+YieldDonatingStrategy strategy = new YieldDonatingStrategy(
+    SPARK_VAULT_ADDRESS,                    // yieldSource
+    USDC_ADDRESS,                          // asset
+    "USDC Spark YieldDonating Strategy",   // name
+    management,                            // management
+    keeper,                               // keeper
+    emergencyAdmin,                       // emergencyAdmin
+    address(securityRouter),              // dragonRouter
+    true,                                 // enableBurning
+    TOKENIZED_STRATEGY_ADDRESS            // tokenizedStrategy
+);
+```
 
-- [ ] Implement all TODO functions in the strategy
-- [ ] Update IYieldSource interface for your protocol
-- [ ] Set up proper token approvals in constructor
-- [ ] Test all core functionality
-- [ ] Test profit donation to dragonRouter
-- [ ] Test loss protection if enabled
-- [ ] Verify emergency shutdown procedures
+3. **Link Contracts**
+```solidity
+securityRouter.setStrategy(address(strategy));
+```
 
+### Configuration
+- Set appropriate roles for each contract
+- Configure epoch duration (default: 30 days)
+- Set up Cantina operator permissions
+- Test with small amounts before full deployment
 
-## Key Differences from Standard Tokenized Strategies
+## 🔒 Security Considerations
 
-| Feature | Standard Strategy | YieldDonating Strategy |
-|---------|------------------|----------------------|
-| Performance Fees | Charges fees to LPs | NO fees - all yield donated |
-| Profit Distribution | Kept by strategy/fees | Minted as shares to dragonRouter |
-| Loss Protection | Users bear losses | Optional burning of dragon shares |
-| Use Case | Maximize LP returns | Public goods funding |
+- **Access Control**: Role-based permissions for critical functions
+- **Signature Verification**: Cantina reports verified cryptographically  
+- **Cap Protection**: 5% per-issue limit prevents fund drainage
+- **Emergency Shutdown**: Strategy can be paused and funds recovered
+- **Loss Protection**: Optional burning of dragon shares protects users
+- **Rollover Safety**: Unused funds safely carried to next epoch
+
+## 🤝 Integration with Cantina
+
+The SecurityRouter expects Cantina to:
+1. **Review and approve** project applications
+2. **Verify bug reports** from security researchers
+3. **Submit signed reports** using the `submitBugReports()` function
+4. **Maintain signature keys** for cryptographic verification
+
+## 📊 Economics & Incentives
+
+- **For Users**: Earn yield while supporting security research
+- **For Projects**: Get security auditing without upfront costs
+- **For Researchers**: Earn substantial rewards for finding bugs
+- **For Ecosystem**: Improved overall security through continuous auditing
+
+---
+
+**Built with ❤️ for Web3 Security**
 
 

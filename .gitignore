@@ -7,8 +7,6 @@ out/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
 
 # Dotenv file
 .env
@@ -27,5 +25,3 @@ yarn.lock
 /dependencies
 /lib
 
-OCTANT_V2_FLOW_DOCUMENTATION.md
-QUICK_REFERENCE.md
