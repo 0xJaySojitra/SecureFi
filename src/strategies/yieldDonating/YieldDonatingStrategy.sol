@@ -5,10 +5,7 @@ import {BaseStrategy} from "@octant-core/core/BaseStrategy.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/// @notice Thrown when deposit amount exceeds vault limit
-error DepositExceedsVaultLimit();
-
-// ERC4626 interface for Aave Vault integration
+// ERC4626 interface for Spark Vault integration
 interface IERC4626 {
     function deposit(uint256 assets, address receiver) external returns (uint256);
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256);
@@ -37,7 +34,7 @@ interface IERC4626 {
 contract YieldDonatingStrategy is BaseStrategy {
     using SafeERC20 for IERC20;
 
-    /// @notice Address of the ERC4626 vault (Aave Vault)
+    /// @notice Address of the ERC4626 vault (Spark Vault)
     IERC4626 public immutable YIELD_SOURCE;
 
     /**
@@ -98,15 +95,10 @@ contract YieldDonatingStrategy is BaseStrategy {
      * to deploy.
      */
     function _deployFunds(uint256 _amount) internal override {
-        // Deploy funds to the Aave ERC4626 vault
+        // Deploy funds to the Spark ERC4626 vault
         if (_amount > 0) {
-            // Check if the vault can accept this deposit
-            uint256 maxDeposit = YIELD_SOURCE.maxDeposit(address(this));
-            if (_amount > maxDeposit) {
-                revert DepositExceedsVaultLimit();
-            }
-            
             // Deposit assets into the ERC4626 vault and receive shares
+            // Note: Deposit limits are already checked by TokenizedStrategy via availableDepositLimit()
             YIELD_SOURCE.deposit(_amount, address(this));
         }
     }
@@ -137,10 +129,10 @@ contract YieldDonatingStrategy is BaseStrategy {
         if (_amount > 0) {
             // Check how much we can withdraw
             uint256 maxWithdraw = YIELD_SOURCE.maxWithdraw(address(this));
-            
+
             // Limit withdrawal to what's available
             uint256 amountToWithdraw = _amount > maxWithdraw ? maxWithdraw : _amount;
-            
+
             if (amountToWithdraw > 0) {
                 // Withdraw assets from the ERC4626 vault
                 YIELD_SOURCE.withdraw(amountToWithdraw, address(this), address(this));
@@ -172,22 +164,22 @@ contract YieldDonatingStrategy is BaseStrategy {
      */
     function _harvestAndReport() internal override returns (uint256 _totalAssets) {
         // Calculate total assets held by the strategy
-        
+
         // 1. Get idle assets (assets sitting in the strategy contract)
         uint256 idleAssets = IERC20(asset).balanceOf(address(this));
-        
-        // 2. Get assets deployed in the Aave ERC4626 vault
+
+        // 2. Get assets deployed in the Spark ERC4626 vault
         uint256 sharesBalance = YIELD_SOURCE.balanceOf(address(this));
         uint256 deployedAssets = 0;
-        
+
         if (sharesBalance > 0) {
             // Convert shares to underlying assets
             deployedAssets = YIELD_SOURCE.convertToAssets(sharesBalance);
         }
-        
+
         // 3. Return total assets (idle + deployed)
         _totalAssets = idleAssets + deployedAssets;
-        
+
         // Note: In a more complex implementation, you might also:
         // - Claim any additional rewards from the vault
         // - Compound rewards back into the vault
@@ -200,21 +192,24 @@ contract YieldDonatingStrategy is BaseStrategy {
 
     /**
      * @notice Gets the max amount of `asset` that can be withdrawn.
-     * @dev Can be overridden to implement withdrawal limits.
-     * @return . The available amount that can be withdrawn.
+     * @dev Returns the maximum amount that can be withdrawn from the Spark vault.
+     * @return The available amount that can be withdrawn.
      */
     function availableWithdrawLimit(address /*_owner*/) public view virtual override returns (uint256) {
-        return type(uint256).max;
+        // Return the maximum amount the vault allows us to withdraw
+        return IERC20(asset).balanceOf(address(this)) + YIELD_SOURCE.maxWithdraw(address(this));
     }
 
     /**
      * @notice Gets the max amount of `asset` that can be deposited.
-     * @dev Can be overridden to implement deposit limits.
-     * @param . The address that will deposit.
-     * @return . The available amount that can be deposited.
+     * @dev Returns the maximum amount that can be deposited into the Spark vault.
+     * @return The available amount that can be deposited.
      */
     function availableDepositLimit(address /*_owner*/) public view virtual override returns (uint256) {
-        return type(uint256).max;
+        // Return the maximum amount the vault allows us to deposit
+        uint256 idleBalance = IERC20(asset).balanceOf(address(this));
+        uint256 vaultLimit = YIELD_SOURCE.maxDeposit(address(this));
+        return vaultLimit > idleBalance ? vaultLimit - idleBalance : 0;
     }
 
     /**
@@ -272,6 +267,8 @@ contract YieldDonatingStrategy is BaseStrategy {
      * @param _amount The amount of asset to attempt to free.
      */
     function _emergencyWithdraw(uint256 _amount) internal virtual override {
+        // Use _freeFunds which handles vault limits safely
+        // This ensures we don't withdraw more than what's available
         _freeFunds(_amount);
     }
 }

@@ -46,10 +46,10 @@ contract SecurityRouter is AccessControl {
     
     /// @notice The YieldDonatingStrategy contract (ERC4626-compliant)
     /// @dev This is the strategy that mints donation shares to this router
-    IERC4626Strategy public immutable YIELD_STRATEGY;
+    IERC4626Strategy public YIELD_STRATEGY;
     
     /// @notice The underlying asset (e.g., USDC)
-    IERC20Metadata public immutable ASSET;
+    IERC20Metadata public ASSET;
     
     uint256 public constant EPOCH_DURATION = 30 days;
     uint256 public epochStartTime;
@@ -97,6 +97,27 @@ contract SecurityRouter is AccessControl {
     
     uint256 public projectCount;
     
+    // ============ STRUCTS ============
+    
+    /**
+     * @notice Helper struct for bug report submissions from Cantina
+     * @dev Used as input parameter for submitBugReports function
+     */
+    struct BugReportSubmission {
+        bytes32 reportId;
+        address reporter;
+        Severity severity;
+    }
+
+    /**
+     * @notice Helper struct for grouping multiple bug reports by project
+     * @dev Used to submit bug reports for multiple projects in a single transaction
+     */
+    struct ProjectReportSubmission {
+        uint256 projectId;
+        BugReportSubmission[] reports;
+    }
+    
     // ============ EVENTS ============
     
     event ProjectRegistered(uint256 indexed projectId, string name, address owner);
@@ -109,24 +130,20 @@ contract SecurityRouter is AccessControl {
         uint256 amount,
         Severity severity
     );
+    event StrategySet(address indexed strategy);
     
     // ============ CONSTRUCTOR ============
     
     /**
-     * @param _yieldStrategy Address of the YieldDonatingStrategy contract
      * @param _cantinaOperator Address of Cantina operator who can approve projects and submit reports
      * @param _admin Address of admin who can manage roles
      * @param _keeper Address of keeper who can trigger epoch advances and reports
      */
     constructor(
-        address _yieldStrategy,
         address _cantinaOperator,
         address _admin,
         address _keeper
     ) {
-        YIELD_STRATEGY = IERC4626Strategy(_yieldStrategy);
-        ASSET = IERC20Metadata(YIELD_STRATEGY.asset());
-        
         _grantRole(CANTINA_ROLE, _cantinaOperator);
         _grantRole(ADMIN_ROLE, _admin);
         _grantRole(KEEPER_ROLE, _keeper);
@@ -134,6 +151,21 @@ contract SecurityRouter is AccessControl {
         
         epochStartTime = block.timestamp;
         currentEpoch = 1;
+    }
+
+    /**
+     * @notice Set the yield strategy contract address
+     * @dev Can only be called by admin. Used to break circular dependency during deployment.
+     * @param _yieldStrategy Address of the YieldDonatingStrategy contract
+     */
+    function setStrategy(address _yieldStrategy) external onlyRole(ADMIN_ROLE) {
+        require(_yieldStrategy != address(0), "Invalid strategy address");
+        require(address(YIELD_STRATEGY) == address(0), "Strategy already set");
+        
+        YIELD_STRATEGY = IERC4626Strategy(_yieldStrategy);
+        ASSET = IERC20Metadata(YIELD_STRATEGY.asset());
+        
+        emit StrategySet(_yieldStrategy);
     }
     
     // ============ PROJECT MANAGEMENT ============
@@ -181,6 +213,7 @@ contract SecurityRouter is AccessControl {
      * 3. Assets are now available for bug bounty distribution
      */
     function advanceEpoch() external onlyRole(KEEPER_ROLE) {
+        require(address(YIELD_STRATEGY) != address(0), "Strategy not set");
         require(
             block.timestamp >= epochStartTime + EPOCH_DURATION,
             "Epoch not finished"
@@ -239,11 +272,20 @@ contract SecurityRouter is AccessControl {
         // Verify signature (Cantina signs the report batch)
         _verifyCantinaSignature(epoch, projectReports, signature);
         
-        // Calculate yield allocation per project (divide among participating projects only)
-        uint256 projectYield = epochs[epoch].totalYield / projectReports.length;
+        // Calculate yield allocation per project with remainder handling
+        uint256 totalYield = epochs[epoch].totalYield;
+        uint256 numProjects = projectReports.length;
+        uint256 baseProjectYield = totalYield / numProjects;
+        uint256 remainder = totalYield % numProjects;
         
         // Process reports for each project
         for (uint256 p; p < projectReports.length;) {
+            // Give remainder to first projects (fair distribution of dust)
+            uint256 projectYield = baseProjectYield;
+            if (p < remainder) {
+                projectYield += 1;
+            }
+            
             _processProjectReports(epoch, projectReports[p], projectYield);
             unchecked { ++p; }
         }
@@ -268,9 +310,30 @@ contract SecurityRouter is AccessControl {
         uint256 totalWeight = _calculateTotalWeight(reports);
         require(totalWeight > 0, "No valid reports");
         
-        // Distribute to each reporter
+        // Calculate base payouts and track remainder
+        uint256 totalDistributed = 0;
+        uint256[] memory payouts = new uint256[](reports.length);
+        
+        // First pass: calculate base payouts
         for (uint256 i; i < reports.length;) {
-            uint256 payout = (projectYield * _getSeverityWeight(reports[i].severity)) / totalWeight;
+            payouts[i] = (projectYield * _getSeverityWeight(reports[i].severity)) / totalWeight;
+            totalDistributed += payouts[i];
+            unchecked { ++i; }
+        }
+        
+        // Distribute remainder to reports in order (simple and fair)
+        uint256 remainder = projectYield - totalDistributed;
+        for (uint256 i; i < reports.length && remainder > 0;) {
+            payouts[i] += 1;
+            remainder--;
+            unchecked { ++i; }
+        }
+        
+        // Distribute payouts to reporters
+        for (uint256 i; i < reports.length;) {
+            uint256 payout = payouts[i];
+            require(payout > 0, "Payout cannot be zero");
+            
             // Transfer underlying asset (USDC) to reporter
             IERC20(address(ASSET)).safeTransfer(reports[i].reporter, payout);
             // Record bug report
@@ -396,6 +459,7 @@ contract SecurityRouter is AccessControl {
      * @return The number of strategy shares held by this router
      */
     function getAccumulatedShares() external view returns (uint256) {
+        if (address(YIELD_STRATEGY) == address(0)) return 0;
         return YIELD_STRATEGY.balanceOf(address(this));
     }
     
@@ -405,23 +469,10 @@ contract SecurityRouter is AccessControl {
      * @return The asset value of shares held by this router
      */
     function getAccumulatedAssetValue() external view returns (uint256) {
+        if (address(YIELD_STRATEGY) == address(0)) return 0;
         uint256 shares = YIELD_STRATEGY.balanceOf(address(this));
         if (shares == 0) return 0;
         return YIELD_STRATEGY.convertToAssets(shares);
-    }
-    
-    /**
-     * @notice Trigger a report on the strategy to harvest and mint donation shares
-     * @dev Can only be called by keeper. This should be called before advanceEpoch()
-     *      The report will:
-     *      1. Call _harvestAndReport() to calculate total assets
-     *      2. Calculate profit since last report
-     *      3. Mint shares equal to profit amount to this router (dragonRouter)
-     * @return profit The amount of profit detected
-     * @return loss The amount of loss detected (if any)
-     */
-    function triggerStrategyReport() external onlyRole(KEEPER_ROLE) returns (uint256 profit, uint256 loss) {
-        return YIELD_STRATEGY.report();
     }
     
     function getProjectReports(uint256 epoch, uint256 projectId)
@@ -433,21 +484,3 @@ contract SecurityRouter is AccessControl {
     }
 }
 
-/**
- * @notice Helper struct for bug report submissions from Cantina
- * @dev Used as input parameter for submitBugReports function
- */
-struct BugReportSubmission {
-    bytes32 reportId;
-    address reporter;
-    SecurityRouter.Severity severity;
-}
-
-/**
- * @notice Helper struct for grouping multiple bug reports by project
- * @dev Used to submit bug reports for multiple projects in a single transaction
- */
-struct ProjectReportSubmission {
-    uint256 projectId;
-    BugReportSubmission[] reports;
-}

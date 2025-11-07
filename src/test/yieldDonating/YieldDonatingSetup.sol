@@ -9,6 +9,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.
 import {YieldDonatingStrategyFactory as StrategyFactory} from "../../strategies/yieldDonating/YieldDonatingStrategyFactory.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
 import {ITokenizedStrategy} from "@octant-core/core/interfaces/ITokenizedStrategy.sol";
+import {SecurityRouter} from "../../router/SecurityRouter.sol";
 
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
@@ -18,6 +19,7 @@ contract YieldDonatingSetup is Test, IEvents {
     // Contract instances that we will use repeatedly.
     IERC20Metadata public asset;
     IStrategyInterface public strategy;
+    SecurityRouter public securityRouter;
 
     StrategyFactory public strategyFactory;
 
@@ -25,8 +27,12 @@ contract YieldDonatingSetup is Test, IEvents {
     address public user = address(10);
     address public keeper = address(4);
     address public management = address(1);
-    address public dragonRouter = address(3); // This is the donation address
+    address public dragonRouter; // Will be set to SecurityRouter address
     address public emergencyAdmin = address(5);
+    
+    // SecurityRouter specific addresses
+    address public cantinaOperator = address(6);
+    address public admin = address(7);
 
     // YieldDonating specific variables
     bool public enableBurning = true;
@@ -65,20 +71,40 @@ contract YieldDonatingSetup is Test, IEvents {
         // Deploy YieldDonatingTokenizedStrategy implementation
         tokenizedStrategyAddress = address(new YieldDonatingTokenizedStrategy());
 
-        strategyFactory = new StrategyFactory(management, dragonRouter, keeper, emergencyAdmin);
+        // Step 1: Deploy SecurityRouter first (without strategy)
+        securityRouter = new SecurityRouter(
+            cantinaOperator,
+            admin,
+            keeper
+        );
 
-        // Deploy strategy and set variables
+        // Step 2: Set dragonRouter to SecurityRouter address
+        dragonRouter = address(securityRouter);
+        strategyFactory = new StrategyFactory(management, dragonRouter, keeper, emergencyAdmin);
+        
+        // Step 3: Deploy strategy with SecurityRouter as dragonRouter
         strategy = IStrategyInterface(setUpStrategy());
+
+        // Step 4: Set the strategy address in SecurityRouter
+        vm.prank(admin);
+        securityRouter.setStrategy(address(strategy));
+
+        // Note: SecurityRouter doesn't need keeper role on strategy
+        // The keeper will call SecurityRouter functions, and SecurityRouter will call strategy functions
+        // This maintains the original keeper setup for existing tests
 
         // factory = strategy.FACTORY(); // Remove this line as FACTORY is not implemented
 
         // label all the used addresses for traces
         vm.label(keeper, "keeper");
-        // vm.label(factory, "factory"); // Factory not used in this setup
         vm.label(address(asset), "asset");
         vm.label(management, "management");
         vm.label(address(strategy), "strategy");
         vm.label(dragonRouter, "dragonRouter");
+        vm.label(address(securityRouter), "securityRouter");
+        vm.label(cantinaOperator, "cantinaOperator");
+        vm.label(admin, "admin");
+        vm.label(user, "user");
     }
 
     function setUpStrategy() public returns (address) {
@@ -156,5 +182,39 @@ contract YieldDonatingSetup is Test, IEvents {
         // Call using low-level call since setEnableBurning may not be in all interfaces
         (bool success, ) = address(strategy).call(abi.encodeWithSignature("setEnableBurning(bool)", _enableBurning));
         require(success, "setEnableBurning failed");
+    }
+
+    // ============ SECURITY ROUTER HELPER FUNCTIONS ============
+
+    function checkSecurityRouterBalances(
+        uint256 expectedShares,
+        uint256 expectedAssets,
+        string memory message
+    ) public {
+        uint256 actualShares = securityRouter.getAccumulatedShares();
+        uint256 actualAssets = securityRouter.getAccumulatedAssetValue();
+        
+        assertEq(actualShares, expectedShares, string(abi.encodePacked(message, " - shares")));
+        assertEq(actualAssets, expectedAssets, string(abi.encodePacked(message, " - assets")));
+    }
+
+    function advanceEpoch() public {
+        vm.prank(keeper);
+        securityRouter.advanceEpoch();
+    }
+
+    function triggerReportDirect() public returns (uint256 profit, uint256 loss) {
+        // Call report directly on strategy (alternative method)
+        vm.prank(keeper);
+        return ITokenizedStrategy(address(strategy)).report();
+    }
+
+    function registerProject(string memory name, string memory metadata) public returns (uint256) {
+        return securityRouter.registerProject(name, metadata);
+    }
+
+    function approveProject(uint256 projectId) public {
+        vm.prank(cantinaOperator);
+        securityRouter.approveProject(projectId);
     }
 }
