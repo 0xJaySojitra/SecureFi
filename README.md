@@ -26,7 +26,7 @@ This project implements a **YieldDonating Strategy** that integrates with a **Se
 2. Install [Node.js](https://nodejs.org/en/download/package-manager/)
 3. Clone this repository:
 ```sh
-git clone git@github.com:golemfoundation/octant-v2-strategy-foundry-mix.git
+git clone git@github.com:0xJaySojitra/SecureFi.git
 ```
 
 4. Install dependencies:
