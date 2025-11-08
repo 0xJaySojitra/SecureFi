@@ -4,8 +4,8 @@
 
 ### 1. Clone and Setup
 ```bash
-git clone <repository-url>
-cd octant-v2-strategy-foundry-mix
+git clone https://github.com/0xJaySojitra/SecureFi.git
+cd SecureFi
 forge install && forge soldeer install
 cp .env.example .env
 ```
