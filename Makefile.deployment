@@ -1,0 +1,247 @@
+# ============================================
+# YieldDonating Strategy Deployment Makefile
+# ============================================
+
+# Load environment variables
+include deployment.env.example
+
+# Default network (can be overridden)
+NETWORK ?= mainnet
+RPC_URL ?= $(if $(filter mainnet,$(NETWORK)),https://eth-mainnet.g.alchemy.com/v2/$(ALCHEMY_API_KEY),$(RPC_URL))
+
+# Forge command base
+FORGE_BASE = forge script --rpc-url $(RPC_URL) --broadcast --verify --gas-limit 5000000
+
+# ============================================
+# Main Deployment Commands
+# ============================================
+
+.PHONY: help deploy-factory deploy-direct verify test-deployment clean
+
+help: ## Show this help message
+	@echo "YieldDonating Strategy Deployment Commands"
+	@echo "=========================================="
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Environment Variables:"
+	@echo "  NETWORK=mainnet|goerli|sepolia  (default: mainnet)"
+	@echo "  RPC_URL=<your_rpc_url>          (auto-set based on NETWORK)"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make deploy-factory              # Deploy with factory (recommended)"
+	@echo "  make deploy-direct               # Deploy directly without factory"
+	@echo "  make verify NETWORK=goerli       # Verify on Goerli testnet"
+	@echo "  make test-deployment             # Test deployed contracts"
+
+deploy-factory: ## Deploy complete system using factory (recommended)
+	@echo "🏭 Deploying with Factory..."
+	@echo "Network: $(NETWORK)"
+	@echo "RPC URL: $(RPC_URL)"
+	@$(FORGE_BASE) script/DeployWithFactory.s.sol
+	@echo "✅ Factory deployment completed!"
+	@echo ""
+	@echo "📋 Next steps:"
+	@echo "1. Save the contract addresses from the output above"
+	@echo "2. Run 'make test-deployment' to verify everything works"
+	@echo "3. Initialize first epoch with 'make init-epoch'"
+
+deploy-direct: ## Deploy contracts directly without factory
+	@echo "🔧 Deploying directly..."
+	@echo "Network: $(NETWORK)"
+	@echo "RPC URL: $(RPC_URL)"
+	@$(FORGE_BASE) script/DeployYieldDonatingStrategy.s.sol
+	@echo "✅ Direct deployment completed!"
+
+deploy-testnet: ## Deploy to testnet (Goerli)
+	@echo "🧪 Deploying to testnet..."
+	@$(MAKE) deploy-factory NETWORK=goerli
+
+# ============================================
+# Verification and Testing
+# ============================================
+
+verify: ## Verify deployed contracts on Etherscan
+	@echo "🔍 Verifying contracts..."
+	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "❌ STRATEGY_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	forge verify-contract $(STRATEGY_ADDRESS) src/strategies/yieldDonating/YieldDonatingStrategy.sol:YieldDonatingStrategy --rpc-url $(RPC_URL)
+	forge verify-contract $(SECURITY_ROUTER_ADDRESS) src/router/SecurityRouter.sol:SecurityRouter --rpc-url $(RPC_URL)
+	@echo "✅ Verification completed!"
+
+test-deployment: ## Test deployed contracts functionality
+	@echo "🧪 Testing deployment..."
+	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "❌ STRATEGY_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@echo "Testing Strategy configuration..."
+	@cast call $(STRATEGY_ADDRESS) "asset()" --rpc-url $(RPC_URL)
+	@cast call $(STRATEGY_ADDRESS) "YIELD_SOURCE()" --rpc-url $(RPC_URL)
+	@cast call $(STRATEGY_ADDRESS) "dragonRouter()" --rpc-url $(RPC_URL)
+	@echo "Testing SecurityRouter configuration..."
+	@cast call $(SECURITY_ROUTER_ADDRESS) "ASSET()" --rpc-url $(RPC_URL)
+	@cast call $(SECURITY_ROUTER_ADDRESS) "YIELD_STRATEGY()" --rpc-url $(RPC_URL)
+	@cast call $(SECURITY_ROUTER_ADDRESS) "currentEpoch()" --rpc-url $(RPC_URL)
+	@echo "Testing deposit limits..."
+	@cast call $(STRATEGY_ADDRESS) "availableDepositLimit(address)" 0x0000000000000000000000000000000000000000 --rpc-url $(RPC_URL)
+	@cast call $(STRATEGY_ADDRESS) "availableWithdrawLimit(address)" 0x0000000000000000000000000000000000000000 --rpc-url $(RPC_URL)
+	@echo "✅ All tests passed!"
+
+# ============================================
+# Post-Deployment Setup
+# ============================================
+
+init-epoch: ## Initialize first epoch
+	@echo "🚀 Initializing first epoch..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "❌ KEEPER_ADDRESS not set"; exit 1; fi
+	cast send $(SECURITY_ROUTER_ADDRESS) "advanceEpoch()" --from $(KEEPER_ADDRESS) --rpc-url $(RPC_URL)
+	@echo "✅ First epoch initialized!"
+
+register-test-project: ## Register a test project
+	@echo "📝 Registering test project..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	cast send $(SECURITY_ROUTER_ADDRESS) "registerProject(string,string)" "Test Project" "ipfs://test-metadata" --rpc-url $(RPC_URL)
+	@echo "✅ Test project registered!"
+
+approve-test-project: ## Approve test project (Cantina role required)
+	@echo "✅ Approving test project..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(CANTINA_OPERATOR_ADDRESS)" ]; then echo "❌ CANTINA_OPERATOR_ADDRESS not set"; exit 1; fi
+	cast send $(SECURITY_ROUTER_ADDRESS) "approveProject(uint256)" 1 --from $(CANTINA_OPERATOR_ADDRESS) --rpc-url $(RPC_URL)
+	@echo "✅ Test project approved!"
+
+# ============================================
+# Development and Testing
+# ============================================
+
+test-local: ## Run local tests
+	@echo "🧪 Running local tests..."
+	forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $(RPC_URL)
+
+test-all: ## Run all tests
+	@echo "🧪 Running all tests..."
+	forge test --fork-url $(RPC_URL)
+
+compile: ## Compile contracts
+	@echo "🔨 Compiling contracts..."
+	forge build
+
+clean: ## Clean build artifacts
+	@echo "🧹 Cleaning build artifacts..."
+	forge clean
+	rm -rf cache out
+
+# ============================================
+# Factory Management
+# ============================================
+
+deploy-factory-only: ## Deploy only the factory contract (requires SecurityRouter first)
+	@echo "🏭 Deploying factory only..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set (factory needs donationAddress)"; exit 1; fi
+	@if [ -z "$(MANAGEMENT_ADDRESS)" ]; then echo "❌ MANAGEMENT_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "❌ KEEPER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(EMERGENCY_ADMIN_ADDRESS)" ]; then echo "❌ EMERGENCY_ADMIN_ADDRESS not set"; exit 1; fi
+	forge create src/strategies/yieldDonating/YieldDonatingStrategyFactory.sol:YieldDonatingStrategyFactory \
+		--constructor-args $(MANAGEMENT_ADDRESS) $(SECURITY_ROUTER_ADDRESS) $(KEEPER_ADDRESS) $(EMERGENCY_ADMIN_ADDRESS) \
+		--rpc-url $(RPC_URL) \
+		--verify
+	@echo "✅ Factory deployed! Note: TokenizedStrategy implementation is auto-deployed by factory."
+
+factory-info: ## Get factory information
+	@echo "📊 Factory Information..."
+	@if [ -z "$(FACTORY_ADDRESS)" ]; then echo "❌ FACTORY_ADDRESS not set"; exit 1; fi
+	@echo "Factory Configuration:"
+	@echo "- Management:"
+	@cast call $(FACTORY_ADDRESS) "management()" --rpc-url $(RPC_URL)
+	@echo "- Donation Address (SecurityRouter):"
+	@cast call $(FACTORY_ADDRESS) "donationAddress()" --rpc-url $(RPC_URL)
+	@echo "- Keeper:"
+	@cast call $(FACTORY_ADDRESS) "keeper()" --rpc-url $(RPC_URL)
+	@echo "- Emergency Admin:"
+	@cast call $(FACTORY_ADDRESS) "EMERGENCY_ADMIN()" --rpc-url $(RPC_URL)
+	@echo "- TokenizedStrategy Implementation:"
+	@cast call $(FACTORY_ADDRESS) "TOKENIZED_STRATEGY_ADDRESS()" --rpc-url $(RPC_URL)
+	@echo "- Enable Burning:"
+	@cast call $(FACTORY_ADDRESS) "enableBurning()" --rpc-url $(RPC_URL)
+	@echo ""
+	@echo "To check if a strategy is deployed by this factory:"
+	@echo "cast call $(FACTORY_ADDRESS) \"isDeployedStrategy(address)\" \$STRATEGY_ADDRESS --rpc-url $(RPC_URL)"
+
+# ============================================
+# Monitoring and Maintenance
+# ============================================
+
+check-status: ## Check system status
+	@echo "📊 System Status..."
+	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "❌ STRATEGY_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@echo "Strategy total assets:"
+	@cast call $(STRATEGY_ADDRESS) "totalAssets()" --rpc-url $(RPC_URL)
+	@echo "Current epoch:"
+	@cast call $(SECURITY_ROUTER_ADDRESS) "currentEpoch()" --rpc-url $(RPC_URL)
+	@echo "Available funds:"
+	@cast call $(SECURITY_ROUTER_ADDRESS) "getAvailableFunds()" --rpc-url $(RPC_URL)
+
+advance-epoch: ## Advance to next epoch (Keeper only)
+	@echo "⏭️ Advancing epoch..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "❌ KEEPER_ADDRESS not set"; exit 1; fi
+	cast send $(SECURITY_ROUTER_ADDRESS) "advanceEpoch()" --from $(KEEPER_ADDRESS) --rpc-url $(RPC_URL)
+	@echo "✅ Epoch advanced!"
+
+# ============================================
+# Configuration and Setup
+# ============================================
+
+setup-env: ## Setup environment file
+	@echo "⚙️ Setting up environment..."
+	@if [ ! -f deployment.env.example ]; then echo "❌ deployment.env.example not found"; exit 1; fi
+	@cp deployment.env.example .env.deployment
+	@echo "✅ Environment file created: .env.deployment"
+	@echo "📝 Please edit .env.deployment with your configuration"
+
+check-env: ## Check environment configuration
+	@echo "🔍 Checking environment..."
+	@echo "RPC_URL: $(RPC_URL)"
+	@echo "ADMIN_ADDRESS: $(ADMIN_ADDRESS)"
+	@echo "KEEPER_ADDRESS: $(KEEPER_ADDRESS)"
+	@echo "MANAGEMENT_ADDRESS: $(MANAGEMENT_ADDRESS)"
+	@echo "EMERGENCY_ADMIN_ADDRESS: $(EMERGENCY_ADMIN_ADDRESS)"
+	@echo "CANTINA_OPERATOR_ADDRESS: $(CANTINA_OPERATOR_ADDRESS)"
+	@echo "STRATEGY_NAME: $(STRATEGY_NAME)"
+	@echo "FACTORY_ADDRESS: $(FACTORY_ADDRESS)"
+	@echo ""
+	@echo "Note: TOKENIZED_STRATEGY_IMPLEMENTATION is auto-deployed by factory"
+	@echo "Note: ENABLE_BURNING defaults to true in factory (can be changed via setEnableBurning)"
+
+# ============================================
+# Quick Start
+# ============================================
+
+quick-start: setup-env ## Quick start guide
+	@echo "🚀 YieldDonating Strategy Quick Start"
+	@echo "===================================="
+	@echo ""
+	@echo "1. Edit configuration:"
+	@echo "   nano .env.deployment"
+	@echo ""
+	@echo "2. Deploy system:"
+	@echo "   make deploy-factory"
+	@echo ""
+	@echo "3. Test deployment:"
+	@echo "   make test-deployment"
+	@echo ""
+	@echo "4. Initialize system:"
+	@echo "   make init-epoch"
+	@echo ""
+	@echo "5. Register test project:"
+	@echo "   make register-test-project"
+	@echo "   make approve-test-project"
+	@echo ""
+	@echo "📚 For more details, see docs/DeploymentScripts.md"
+
+# ============================================
+# Default target
+# ============================================
+
+.DEFAULT_GOAL := help
