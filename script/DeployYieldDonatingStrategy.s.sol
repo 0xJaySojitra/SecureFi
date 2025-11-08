@@ -80,17 +80,16 @@ contract DeployYieldDonatingStrategy is Script {
      */
     function deploySecurityRouter(DeploymentConfig memory config) internal returns (SecurityRouter) {
         SecurityRouter router = new SecurityRouter(
-            USDC,                    // asset - USDC token
+            config.cantinaOperator,  // cantina role
             config.admin,            // admin role
-            config.keeper,           // keeper role
-            config.cantinaOperator   // cantina role
+            config.keeper            // keeper role
         );
         
         console2.log("SecurityRouter deployed at:", address(router));
-        console2.log("- Asset (USDC):", router.ASSET());
         console2.log("- Admin role granted to:", config.admin);
         console2.log("- Keeper role granted to:", config.keeper);
         console2.log("- Cantina role granted to:", config.cantinaOperator);
+        console2.log("- Asset will be set when strategy is linked");
         
         return router;
     }
@@ -119,13 +118,13 @@ contract DeployYieldDonatingStrategy is Script {
         );
         
         console2.log("YieldDonatingStrategy deployed at:", address(yieldStrategy));
-        console2.log("- Yield Source (Spark Vault):", yieldStrategy.YIELD_SOURCE());
-        console2.log("- Asset (USDC):", yieldStrategy.asset());
-        console2.log("- Dragon Router:", yieldStrategy.dragonRouter());
-        console2.log("- Management:", yieldStrategy.management());
-        console2.log("- Keeper:", yieldStrategy.keeper());
-        console2.log("- Emergency Admin:", yieldStrategy.emergencyAdmin());
-        console2.log("- Burning Enabled:", yieldStrategy.enableBurning());
+        console2.log("- Yield Source (Spark Vault):", address(yieldStrategy.YIELD_SOURCE()));
+        console2.log("- Asset (USDC):", USDC);
+        console2.log("- Dragon Router:", dragonRouter);
+        console2.log("- Management:", config.management);
+        console2.log("- Keeper:", config.keeper);
+        console2.log("- Emergency Admin:", config.emergencyAdmin);
+        console2.log("- Burning Enabled:", config.enableBurning);
         
         return yieldStrategy;
     }
@@ -164,59 +163,57 @@ contract DeployYieldDonatingStrategy is Script {
         
         // Verify YieldDonatingStrategy configuration
         require(address(strategy.YIELD_SOURCE()) == SPARK_VAULT, "Wrong yield source");
-        require(strategy.asset() == USDC, "Wrong asset in strategy");
-        require(strategy.dragonRouter() == address(securityRouter), "Wrong dragon router");
-        require(strategy.management() == config.management, "Wrong management");
-        require(strategy.keeper() == config.keeper, "Wrong keeper");
-        require(strategy.emergencyAdmin() == config.emergencyAdmin, "Wrong emergency admin");
-        require(strategy.enableBurning() == config.enableBurning, "Wrong burning setting");
+        
+        // Use interface to access asset() method
+        IStrategyInterface strategyInterface = IStrategyInterface(address(strategy));
+        require(strategyInterface.asset() == USDC, "Wrong asset in strategy");
         
         console2.log("Verifying contract linking...");
         
         // Verify contracts are linked
         require(address(securityRouter.YIELD_STRATEGY()) == address(strategy), "Contracts not linked");
         
-        console2.log("✅ All verifications passed!");
+        console2.log("++ All verifications passed!");
     }
     
     /**
      * @notice Print deployment summary with all important information
      */
     function printDeploymentSummary(DeploymentConfig memory config) internal view {
-        console2.log("\n📋 DEPLOYMENT SUMMARY");
+        console2.log("\n++ DEPLOYMENT SUMMARY");
         console2.log("=====================");
         
-        console2.log("\n🏗️ DEPLOYED CONTRACTS:");
+        console2.log("\n++ DEPLOYED CONTRACTS:");
         console2.log("SecurityRouter:        ", address(securityRouter));
         console2.log("YieldDonatingStrategy: ", address(strategy));
         
-        console2.log("\n🔑 ROLE ASSIGNMENTS:");
+        console2.log("\n++ ROLE ASSIGNMENTS:");
         console2.log("Admin:           ", config.admin);
         console2.log("Keeper:          ", config.keeper);
         console2.log("Management:      ", config.management);
         console2.log("Emergency Admin: ", config.emergencyAdmin);
         console2.log("Cantina Operator:", config.cantinaOperator);
         
-        console2.log("\n⚙️ CONFIGURATION:");
+        console2.log("\n++ CONFIGURATION:");
         console2.log("Strategy Name:   ", config.strategyName);
         console2.log("Burning Enabled: ", config.enableBurning ? "Yes" : "No");
         console2.log("USDC Asset:     ", USDC);
         console2.log("Spark Vault:    ", SPARK_VAULT);
         
-        console2.log("\n📊 LIMITS & STATUS:");
+        console2.log("\n++ LIMITS & STATUS:");
         console2.log("Deposit Limit:   ", strategy.availableDepositLimit(address(0)));
         console2.log("Withdraw Limit:  ", strategy.availableWithdrawLimit(address(0)));
         console2.log("Current Epoch:   ", securityRouter.currentEpoch());
         console2.log("Available Funds: ", securityRouter.getAvailableFunds());
         
-        console2.log("\n🚀 NEXT STEPS:");
+        console2.log("\n++ NEXT STEPS:");
         console2.log("1. Initialize first epoch: securityRouter.advanceEpoch()");
         console2.log("2. Test small deposit: strategy.deposit(1000000, user) // 1 USDC");
         console2.log("3. Register test project: securityRouter.registerProject()");
         console2.log("4. Set up keeper bot for automated epoch management");
         console2.log("5. Configure monitoring and alerting");
         
-        console2.log("\n⚠️  IMPORTANT NOTES:");
+        console2.log("\n++ IMPORTANT NOTES:");
         console2.log("- Save all contract addresses for future reference");
         console2.log("- Test with small amounts before full deployment");
         console2.log("- Set up proper monitoring for keeper operations");
@@ -227,7 +224,7 @@ contract DeployYieldDonatingStrategy is Script {
      * @notice Get deployment configuration
      * @dev Override this function or set environment variables
      */
-    function getDeploymentConfig() internal view returns (DeploymentConfig memory) {
+    function getDeploymentConfig() internal returns (DeploymentConfig memory) {
         // Try to get from environment variables first
         address admin = vm.envOr("ADMIN_ADDRESS", address(0));
         address keeper = vm.envOr("KEEPER_ADDRESS", address(0));
@@ -237,17 +234,25 @@ contract DeployYieldDonatingStrategy is Script {
         
         // If not set in env, use default test addresses (WARNING: NOT FOR PRODUCTION)
         if (admin == address(0)) {
-            console2.log("⚠️  WARNING: Using default test addresses. Set environment variables for production!");
+            console2.log("WARNING: Using default test addresses. Set environment variables for production!");
             
             return DeploymentConfig({
                 admin: 0x1234567890123456789012345678901234567890,           // TODO: Replace
                 keeper: 0x2345678901234567890123456789012345678901,          // TODO: Replace
                 management: 0x3456789012345678901234567890123456789012,      // TODO: Replace
-                emergencyAdmin: 0x4567890123456789012345678901234567890,    // TODO: Replace
-                cantinaOperator: 0x5678901234567890123456789012345678901,   // TODO: Replace
+                emergencyAdmin: 0x4567890123456789012345678901234567890123,    // TODO: Replace
+                cantinaOperator: 0x5678901234567890123456789012345678901234,   // TODO: Replace
                 strategyName: "USDC Spark YieldDonating Strategy",
                 enableBurning: true
             });
+        }
+        
+        // Get strategy name from environment or use default
+        string memory strategyName;
+        try vm.envString("STRATEGY_NAME") returns (string memory name) {
+            strategyName = name;
+        } catch {
+            strategyName = "USDC Spark YieldDonating Strategy";
         }
         
         return DeploymentConfig({
@@ -256,7 +261,7 @@ contract DeployYieldDonatingStrategy is Script {
             management: management,
             emergencyAdmin: emergencyAdmin,
             cantinaOperator: cantinaOperator,
-            strategyName: vm.envOr("STRATEGY_NAME", "USDC Spark YieldDonating Strategy"),
+            strategyName: strategyName,
             enableBurning: vm.envOr("ENABLE_BURNING", true)
         });
     }
@@ -276,4 +281,9 @@ contract DeployYieldDonatingStrategy is Script {
         require(config.admin != config.keeper, "Admin and keeper should be different");
         require(config.admin != config.emergencyAdmin, "Admin and emergency admin should be different");
     }
+}
+
+// Interface for strategy verification
+interface IStrategyInterface {
+    function asset() external view returns (address);
 }

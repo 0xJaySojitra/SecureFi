@@ -35,26 +35,26 @@ help: ## Show this help message
 	@echo "  make test-deployment             # Test deployed contracts"
 
 deploy-factory: ## Deploy complete system using factory (recommended)
-	@echo "🏭 Deploying with Factory..."
+	@echo "+ Deploying with Factory..."
 	@echo "Network: $(NETWORK)"
 	@echo "RPC URL: $(RPC_URL)"
 	@$(FORGE_BASE) script/DeployWithFactory.s.sol
-	@echo "✅ Factory deployment completed!"
+	@echo "+ Factory deployment completed!"
 	@echo ""
-	@echo "📋 Next steps:"
+	@echo "+ Next steps:"
 	@echo "1. Save the contract addresses from the output above"
 	@echo "2. Run 'make test-deployment' to verify everything works"
 	@echo "3. Initialize first epoch with 'make init-epoch'"
 
 deploy-direct: ## Deploy contracts directly without factory
-	@echo "🔧 Deploying directly..."
+	@echo "+ Deploying directly..."
 	@echo "Network: $(NETWORK)"
 	@echo "RPC URL: $(RPC_URL)"
 	@$(FORGE_BASE) script/DeployYieldDonatingStrategy.s.sol
-	@echo "✅ Direct deployment completed!"
+	@echo "+ Direct deployment completed!"
 
 deploy-testnet: ## Deploy to testnet (Goerli)
-	@echo "🧪 Deploying to testnet..."
+	@echo "+ Deploying to testnet..."
 	@$(MAKE) deploy-factory NETWORK=goerli
 
 # ============================================
@@ -62,17 +62,17 @@ deploy-testnet: ## Deploy to testnet (Goerli)
 # ============================================
 
 verify: ## Verify deployed contracts on Etherscan
-	@echo "🔍 Verifying contracts..."
-	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "❌ STRATEGY_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@echo "+ Verifying contracts..."
+	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "ERROR: STRATEGY_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
 	forge verify-contract $(STRATEGY_ADDRESS) src/strategies/yieldDonating/YieldDonatingStrategy.sol:YieldDonatingStrategy --rpc-url $(RPC_URL)
 	forge verify-contract $(SECURITY_ROUTER_ADDRESS) src/router/SecurityRouter.sol:SecurityRouter --rpc-url $(RPC_URL)
-	@echo "✅ Verification completed!"
+	@echo "+ Verification completed!"
 
 test-deployment: ## Test deployed contracts functionality
-	@echo "🧪 Testing deployment..."
-	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "❌ STRATEGY_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@echo "+ Testing deployment..."
+	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "ERROR: STRATEGY_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
 	@echo "Testing Strategy configuration..."
 	@cast call $(STRATEGY_ADDRESS) "asset()" --rpc-url $(RPC_URL)
 	@cast call $(STRATEGY_ADDRESS) "YIELD_SOURCE()" --rpc-url $(RPC_URL)
@@ -84,50 +84,50 @@ test-deployment: ## Test deployed contracts functionality
 	@echo "Testing deposit limits..."
 	@cast call $(STRATEGY_ADDRESS) "availableDepositLimit(address)" 0x0000000000000000000000000000000000000000 --rpc-url $(RPC_URL)
 	@cast call $(STRATEGY_ADDRESS) "availableWithdrawLimit(address)" 0x0000000000000000000000000000000000000000 --rpc-url $(RPC_URL)
-	@echo "✅ All tests passed!"
+	@echo "+ All tests passed!"
 
 # ============================================
 # Post-Deployment Setup
 # ============================================
 
 init-epoch: ## Initialize first epoch
-	@echo "🚀 Initializing first epoch..."
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "❌ KEEPER_ADDRESS not set"; exit 1; fi
+	@echo "+ Initializing first epoch..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "ERROR: KEEPER_ADDRESS not set"; exit 1; fi
 	cast send $(SECURITY_ROUTER_ADDRESS) "advanceEpoch()" --from $(KEEPER_ADDRESS) --rpc-url $(RPC_URL)
-	@echo "✅ First epoch initialized!"
+	@echo "+ First epoch initialized!"
 
 register-test-project: ## Register a test project
-	@echo "📝 Registering test project..."
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@echo "+ Registering test project..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
 	cast send $(SECURITY_ROUTER_ADDRESS) "registerProject(string,string)" "Test Project" "ipfs://test-metadata" --rpc-url $(RPC_URL)
-	@echo "✅ Test project registered!"
+	@echo "+ Test project registered!"
 
 approve-test-project: ## Approve test project (Cantina role required)
-	@echo "✅ Approving test project..."
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(CANTINA_OPERATOR_ADDRESS)" ]; then echo "❌ CANTINA_OPERATOR_ADDRESS not set"; exit 1; fi
+	@echo "+ Approving test project..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(CANTINA_OPERATOR_ADDRESS)" ]; then echo "ERROR: CANTINA_OPERATOR_ADDRESS not set"; exit 1; fi
 	cast send $(SECURITY_ROUTER_ADDRESS) "approveProject(uint256)" 1 --from $(CANTINA_OPERATOR_ADDRESS) --rpc-url $(RPC_URL)
-	@echo "✅ Test project approved!"
+	@echo "+ Test project approved!"
 
 # ============================================
 # Development and Testing
 # ============================================
 
 test-local: ## Run local tests
-	@echo "🧪 Running local tests..."
+	@echo "+ Running local tests..."
 	forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $(RPC_URL)
 
 test-all: ## Run all tests
-	@echo "🧪 Running all tests..."
+	@echo "+ Running all tests..."
 	forge test --fork-url $(RPC_URL)
 
 compile: ## Compile contracts
-	@echo "🔨 Compiling contracts..."
+	@echo "+ Compiling contracts..."
 	forge build
 
 clean: ## Clean build artifacts
-	@echo "🧹 Cleaning build artifacts..."
+	@echo "+ Cleaning build artifacts..."
 	forge clean
 	rm -rf cache out
 
@@ -136,20 +136,20 @@ clean: ## Clean build artifacts
 # ============================================
 
 deploy-factory-only: ## Deploy only the factory contract (requires SecurityRouter first)
-	@echo "🏭 Deploying factory only..."
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set (factory needs donationAddress)"; exit 1; fi
-	@if [ -z "$(MANAGEMENT_ADDRESS)" ]; then echo "❌ MANAGEMENT_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "❌ KEEPER_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(EMERGENCY_ADMIN_ADDRESS)" ]; then echo "❌ EMERGENCY_ADMIN_ADDRESS not set"; exit 1; fi
+	@echo "+ Deploying factory only..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set (factory needs donationAddress)"; exit 1; fi
+	@if [ -z "$(MANAGEMENT_ADDRESS)" ]; then echo "ERROR: MANAGEMENT_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "ERROR: KEEPER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(EMERGENCY_ADMIN_ADDRESS)" ]; then echo "ERROR: EMERGENCY_ADMIN_ADDRESS not set"; exit 1; fi
 	forge create src/strategies/yieldDonating/YieldDonatingStrategyFactory.sol:YieldDonatingStrategyFactory \
 		--constructor-args $(MANAGEMENT_ADDRESS) $(SECURITY_ROUTER_ADDRESS) $(KEEPER_ADDRESS) $(EMERGENCY_ADMIN_ADDRESS) \
 		--rpc-url $(RPC_URL) \
 		--verify
-	@echo "✅ Factory deployed! Note: TokenizedStrategy implementation is auto-deployed by factory."
+	@echo "+ Factory deployed! Note: TokenizedStrategy implementation is auto-deployed by factory."
 
 factory-info: ## Get factory information
-	@echo "📊 Factory Information..."
-	@if [ -z "$(FACTORY_ADDRESS)" ]; then echo "❌ FACTORY_ADDRESS not set"; exit 1; fi
+	@echo "+ Factory Information..."
+	@if [ -z "$(FACTORY_ADDRESS)" ]; then echo "ERROR: FACTORY_ADDRESS not set"; exit 1; fi
 	@echo "Factory Configuration:"
 	@echo "- Management:"
 	@cast call $(FACTORY_ADDRESS) "management()" --rpc-url $(RPC_URL)
@@ -172,9 +172,9 @@ factory-info: ## Get factory information
 # ============================================
 
 check-status: ## Check system status
-	@echo "📊 System Status..."
-	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "❌ STRATEGY_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@echo "+ System Status..."
+	@if [ -z "$(STRATEGY_ADDRESS)" ]; then echo "ERROR: STRATEGY_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
 	@echo "Strategy total assets:"
 	@cast call $(STRATEGY_ADDRESS) "totalAssets()" --rpc-url $(RPC_URL)
 	@echo "Current epoch:"
@@ -183,25 +183,25 @@ check-status: ## Check system status
 	@cast call $(SECURITY_ROUTER_ADDRESS) "getAvailableFunds()" --rpc-url $(RPC_URL)
 
 advance-epoch: ## Advance to next epoch (Keeper only)
-	@echo "⏭️ Advancing epoch..."
-	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "❌ SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
-	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "❌ KEEPER_ADDRESS not set"; exit 1; fi
+	@echo "+ Advancing epoch..."
+	@if [ -z "$(SECURITY_ROUTER_ADDRESS)" ]; then echo "ERROR: SECURITY_ROUTER_ADDRESS not set"; exit 1; fi
+	@if [ -z "$(KEEPER_ADDRESS)" ]; then echo "ERROR: KEEPER_ADDRESS not set"; exit 1; fi
 	cast send $(SECURITY_ROUTER_ADDRESS) "advanceEpoch()" --from $(KEEPER_ADDRESS) --rpc-url $(RPC_URL)
-	@echo "✅ Epoch advanced!"
+	@echo "+ Epoch advanced!"
 
 # ============================================
 # Configuration and Setup
 # ============================================
 
 setup-env: ## Setup environment file
-	@echo "⚙️ Setting up environment..."
-	@if [ ! -f deployment.env.example ]; then echo "❌ deployment.env.example not found"; exit 1; fi
+	@echo "+ Setting up environment..."
+	@if [ ! -f deployment.env.example ]; then echo "ERROR: deployment.env.example not found"; exit 1; fi
 	@cp deployment.env.example .env.deployment
-	@echo "✅ Environment file created: .env.deployment"
-	@echo "📝 Please edit .env.deployment with your configuration"
+	@echo "+ Environment file created: .env.deployment"
+	@echo "+ Please edit .env.deployment with your configuration"
 
 check-env: ## Check environment configuration
-	@echo "🔍 Checking environment..."
+	@echo "+ Checking environment..."
 	@echo "RPC_URL: $(RPC_URL)"
 	@echo "ADMIN_ADDRESS: $(ADMIN_ADDRESS)"
 	@echo "KEEPER_ADDRESS: $(KEEPER_ADDRESS)"
@@ -219,7 +219,7 @@ check-env: ## Check environment configuration
 # ============================================
 
 quick-start: setup-env ## Quick start guide
-	@echo "🚀 YieldDonating Strategy Quick Start"
+	@echo "+ YieldDonating Strategy Quick Start"
 	@echo "===================================="
 	@echo ""
 	@echo "1. Edit configuration:"
@@ -238,7 +238,7 @@ quick-start: setup-env ## Quick start guide
 	@echo "   make register-test-project"
 	@echo "   make approve-test-project"
 	@echo ""
-	@echo "📚 For more details, see docs/DeploymentScripts.md"
+	@echo "+ For more details, see docs/DeploymentScripts.md"
 
 # ============================================
 # Default target

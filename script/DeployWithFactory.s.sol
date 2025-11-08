@@ -4,6 +4,7 @@ pragma solidity 0.8.25;
 import {Script, console2} from "forge-std/Script.sol";
 import {YieldDonatingStrategyFactory} from "../src/strategies/yieldDonating/YieldDonatingStrategyFactory.sol";
 import {SecurityRouter} from "../src/router/SecurityRouter.sol";
+import {console2} from "forge-std/console2.sol";
 
 /**
  * @title Deploy YieldDonating Strategy using Factory
@@ -80,17 +81,16 @@ contract DeployWithFactory is Script {
      */
     function deploySecurityRouter(DeploymentConfig memory config) internal returns (SecurityRouter) {
         SecurityRouter router = new SecurityRouter(
-            USDC,                    // asset - USDC token
+            config.cantinaOperator,  // cantina role
             config.admin,            // admin role
-            config.keeper,           // keeper role
-            config.cantinaOperator   // cantina role
+            config.keeper            // keeper role
         );
         
         console2.log("SecurityRouter deployed at:", address(router));
-        console2.log("- Asset (USDC):", address(router.ASSET()));
         console2.log("- Admin role granted to:", config.admin);
         console2.log("- Keeper role granted to:", config.keeper);
         console2.log("- Cantina role granted to:", config.cantinaOperator);
+        console2.log("- Asset will be set when strategy is linked");
         
         return router;
     }
@@ -206,52 +206,52 @@ contract DeployWithFactory is Script {
         // Verify contracts are linked
         require(address(securityRouter.YIELD_STRATEGY()) == strategy, "Contracts not linked");
         
-        console2.log("✅ All verifications passed!");
+        console2.log("++ All verifications passed!");
     }
     
     /**
      * @notice Print deployment summary with all important information
      */
     function printDeploymentSummary(DeploymentConfig memory config) internal view {
-        console2.log("\n📋 DEPLOYMENT SUMMARY");
+        console2.log("\n++ DEPLOYMENT SUMMARY");
         console2.log("=====================");
         
-        console2.log("\n🏗️ DEPLOYED CONTRACTS:");
+        console2.log("\n++ DEPLOYED CONTRACTS:");
         console2.log("SecurityRouter:        ", address(securityRouter));
         console2.log("Factory:               ", address(factory));
         console2.log("Strategy:             ", strategy);
         
-        console2.log("\n🔑 ROLE ASSIGNMENTS:");
+        console2.log("\n++ ROLE ASSIGNMENTS:");
         console2.log("Admin:           ", config.admin);
         console2.log("Keeper:          ", config.keeper);
         console2.log("Management:      ", config.management);
         console2.log("Emergency Admin: ", config.emergencyAdmin);
         console2.log("Cantina Operator:", config.cantinaOperator);
         
-        console2.log("\n⚙️ CONFIGURATION:");
+        console2.log("\n++ CONFIGURATION:");
         console2.log("Strategy Name:   ", config.strategyName);
         console2.log("USDC Asset:     ", USDC);
         console2.log("Spark Vault:    ", SPARK_VAULT);
         console2.log("Burning Enabled: ", factory.enableBurning() ? "Yes" : "No");
         
-        console2.log("\n📊 FACTORY INFO:");
+        console2.log("\n++ FACTORY INFO:");
         console2.log("TokenizedStrategy Implementation:", factory.TOKENIZED_STRATEGY_ADDRESS());
         console2.log("Strategy Deployed: ", factory.isDeployedStrategy(strategy) ? "Yes" : "No");
         
-        console2.log("\n🚀 NEXT STEPS:");
+        console2.log("\n++ NEXT STEPS:");
         console2.log("1. Initialize first epoch: securityRouter.advanceEpoch()");
         console2.log("2. Test small deposit: strategy.deposit(1000000, user) // 1 USDC");
         console2.log("3. Register test project: securityRouter.registerProject()");
         console2.log("4. Set up keeper bot for automated epoch management");
         console2.log("5. Configure monitoring and alerting");
         
-        console2.log("\n⚠️  IMPORTANT NOTES:");
+        console2.log("\n++ IMPORTANT NOTES:");
         console2.log("- Save all contract addresses for future reference");
         console2.log("- Test with small amounts before full deployment");
         console2.log("- Set up proper monitoring for keeper operations");
         console2.log("- Ensure Cantina has the correct operator address");
         
-        console2.log("\n💾 SAVE THESE ADDRESSES:");
+        console2.log("\n++ SAVE THESE ADDRESSES:");
         console2.log("FACTORY_ADDRESS=", address(factory));
         console2.log("STRATEGY_ADDRESS=", strategy);
         console2.log("SECURITY_ROUTER_ADDRESS=", address(securityRouter));
@@ -260,7 +260,7 @@ contract DeployWithFactory is Script {
     /**
      * @notice Get deployment configuration from environment
      */
-    function getDeploymentConfig() internal view returns (DeploymentConfig memory) {
+    function getDeploymentConfig() internal returns (DeploymentConfig memory) {
         // Try to get from environment variables
         address admin = vm.envOr("ADMIN_ADDRESS", address(0));
         address keeper = vm.envOr("KEEPER_ADDRESS", address(0));
@@ -270,16 +270,24 @@ contract DeployWithFactory is Script {
         
         // If not set in env, use default test addresses (WARNING: NOT FOR PRODUCTION)
         if (admin == address(0)) {
-            console2.log("⚠️  WARNING: Using default test addresses. Set environment variables for production!");
+            console2.log("WARNING: Using default test addresses. Set environment variables for production!");
             
             return DeploymentConfig({
                 admin: 0x1234567890123456789012345678901234567890,           // TODO: Replace
                 keeper: 0x2345678901234567890123456789012345678901,          // TODO: Replace
                 management: 0x3456789012345678901234567890123456789012,      // TODO: Replace
-                emergencyAdmin: 0x4567890123456789012345678901234567890,    // TODO: Replace
-                cantinaOperator: 0x5678901234567890123456789012345678901,   // TODO: Replace
+                emergencyAdmin: 0x4567890123456789012345678901234567890123,    // TODO: Replace
+                cantinaOperator: 0x5678901234567890123456789012345678901234,   // TODO: Replace
                 strategyName: "USDC Spark YieldDonating Strategy"
             });
+        }
+        
+        // Get strategy name from environment or use default
+        string memory strategyName;
+        try vm.envString("STRATEGY_NAME") returns (string memory name) {
+            strategyName = name;
+        } catch {
+            strategyName = "USDC Spark YieldDonating Strategy";
         }
         
         return DeploymentConfig({
@@ -288,7 +296,7 @@ contract DeployWithFactory is Script {
             management: management,
             emergencyAdmin: emergencyAdmin,
             cantinaOperator: cantinaOperator,
-            strategyName: vm.envOr("STRATEGY_NAME", "USDC Spark YieldDonating Strategy")
+            strategyName: strategyName
         });
     }
     
