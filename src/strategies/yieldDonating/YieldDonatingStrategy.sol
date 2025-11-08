@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import {BaseStrategy} from "@octant-core/core/BaseStrategy.sol";
+import {BaseHealthCheck} from "@octant-core/strategies/periphery/BaseHealthCheck.sol";
+
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -31,7 +32,7 @@ interface IERC4626 {
  *      NOTE: To implement permissioned functions you can use the onlyManagement,
  *      onlyEmergencyAuthorized and onlyKeepers modifiers
  */
-contract YieldDonatingStrategy is BaseStrategy {
+contract YieldDonatingStrategy is BaseHealthCheck {
     using SafeERC20 for IERC20;
 
     /// @notice Address of the ERC4626 vault (Spark Vault)
@@ -58,7 +59,7 @@ contract YieldDonatingStrategy is BaseStrategy {
         bool _enableBurning,
         address _tokenizedStrategyAddress
     )
-        BaseStrategy(
+        BaseHealthCheck(
             _asset,
             _name,
             _management,

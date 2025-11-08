@@ -107,23 +107,23 @@ contract YieldDonatingSecurityRouterTest is Setup {
         assertEq(projectId, 1, "First project should have ID 1");
         
         // Check project details
-        (string memory name, string memory metadata, address owner, uint256 registeredEpoch, uint256 approvedEpoch) = 
+        (string memory name, string memory metadata, address owner, uint256 registeredEpoch, bool approved) = 
             securityRouter.projects(projectId);
         
         assertEq(name, "Test Project", "Project name mismatch");
         assertEq(metadata, "https://test.com/metadata", "Project metadata mismatch");
         assertEq(owner, address(this), "Project owner mismatch");
         assertEq(registeredEpoch, 1, "Project registered epoch mismatch");
-        assertEq(approvedEpoch, 0, "Project should not be approved yet");
+        assertEq(approved, false, "Project should not be approved yet");
 
         // Approve the project
         approveProject(projectId);
         
         // Check approval
-        (, , , , approvedEpoch) = securityRouter.projects(projectId);
-        assertEq(approvedEpoch, 1, "Project should be approved in current epoch");
+        (, , , , approved) = securityRouter.projects(projectId);
+        assertEq(approved, true, "Project should be approved");
 
         console2.log("Project registered with ID:", projectId);
-        console2.log("Project approved in epoch:", approvedEpoch);
+        console2.log("Project approved:", approved);
     }
 }

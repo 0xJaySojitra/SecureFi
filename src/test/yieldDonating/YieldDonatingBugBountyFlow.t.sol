@@ -171,10 +171,10 @@ contract YieldDonatingBugBountyFlowTest is Setup {
         console2.log("Current epoch:", securityRouter.currentEpoch());
         
         // Check project approval status
-        (, , , , uint256 project1ApprovalEpoch) = securityRouter.projects(project1Id);
-        (, , , , uint256 project2ApprovalEpoch) = securityRouter.projects(project2Id);
-        console2.log("Project 1 approved in epoch:", project1ApprovalEpoch);
-        console2.log("Project 2 approved in epoch:", project2ApprovalEpoch);
+        (, , , , bool project1Approved) = securityRouter.projects(project1Id);
+        (, , , , bool project2Approved) = securityRouter.projects(project2Id);
+        console2.log("Project 1 approved:", project1Approved);
+        console2.log("Project 2 approved:", project2Approved);
         
         // Prepare bug reports for Project 1
         SecurityRouter.BugReportSubmission[] memory project1Reports = new SecurityRouter.BugReportSubmission[](2);

@@ -65,7 +65,7 @@ contract SecurityRouter is AccessControl {
         string metadata;
         address owner;
         uint256 registeredEpoch;
-        uint256 approvedEpoch; // The epoch in which the project was approved (0 if not approved)
+        bool approved; // Whether the project has been approved
     }
     
     struct BugReport {
@@ -187,7 +187,7 @@ contract SecurityRouter is AccessControl {
             metadata: metadata,
             owner: msg.sender,
             registeredEpoch: currentEpoch,
-            approvedEpoch: 0
+            approved: false
         });
         emit ProjectRegistered(projectCount, name, msg.sender);
         return projectCount;
@@ -198,8 +198,8 @@ contract SecurityRouter is AccessControl {
         onlyRole(CANTINA_ROLE) 
     {
         require(projectId > 0 && projectId <= projectCount, "Invalid projectId");
-        require(projects[projectId].approvedEpoch == 0, "Already approved");
-        projects[projectId].approvedEpoch = currentEpoch; // Mark the epoch in which it was approved
+        require(!projects[projectId].approved, "Already approved");
+        projects[projectId].approved = true;
         emit ProjectApproved(projectId);
     }
     
@@ -322,7 +322,7 @@ contract SecurityRouter is AccessControl {
         uint256 projectId = projectReport.projectId;
         BugReportSubmission[] calldata reports = projectReport.reports;
         
-        require(projects[projectId].approvedEpoch > 0, "Project not approved");
+        require(projects[projectId].approved, "Project not approved");
         require(reports.length > 0, "No reports for project");
         
         // Calculate severity weights for this project
@@ -427,11 +427,11 @@ contract SecurityRouter is AccessControl {
         return globalTotal;
     }
     
-    // Returns the number of projects approved for a given epoch (approvedEpoch > 0 and <= epoch)
-    function _countApprovedProjectsForEpoch(uint256 epoch) internal view returns (uint256) {
+    // Returns the number of approved projects
+    function _countApprovedProjectsForEpoch(uint256 /* epoch */) internal view returns (uint256) {
         uint256 count = 0;
         for (uint256 i = 1; i <= projectCount; i++) {
-            if (projects[i].approvedEpoch > 0 && projects[i].approvedEpoch <= epoch) {
+            if (projects[i].approved) {
                 count++;
             }
         }

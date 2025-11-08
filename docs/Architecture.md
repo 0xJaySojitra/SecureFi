@@ -194,7 +194,7 @@ struct Project {
     string metadata;       // Dynamic  
     address registrant;    // 20 bytes
     uint256 registrationEpoch; // 32 bytes
-    bool approved;         // 1 bit
+    bool approved;         // 1 byte
 }
 
 // Efficient mappings
