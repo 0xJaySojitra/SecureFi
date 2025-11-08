@@ -27,7 +27,7 @@ cp .env.example .env
 # Required variables
 TEST_ASSET_ADDRESS=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  # USDC
 TEST_YIELD_SOURCE=0x28B3a8fb53B741A8Fd78c0fb9A6B2393d896a43d   # Spark Vault
-ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
 ```
 
 ## Test Suites
@@ -47,10 +47,10 @@ function test_availableWithdrawLimit() public
 #### Running Tests
 ```bash
 # Run operation tests
-forge test --match-contract YieldDonatingOperation -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingOperation -vv --fork-url $RPC_URL
 
 # With detailed traces
-forge test --match-contract YieldDonatingOperation -vvv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingOperation -vvv --fork-url $RPC_URL
 ```
 
 #### Expected Results
@@ -90,10 +90,10 @@ function test_crossEpochReporting() public
 #### Running Tests
 ```bash
 # Run bug bounty flow tests
-forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $RPC_URL
 
 # Run specific test
-forge test --match-test test_completeBugBountyFlow -vv --fork-url $ETH_RPC_URL
+forge test --match-test test_completeBugBountyFlow -vv --fork-url $RPC_URL
 ```
 
 #### Expected Results
@@ -137,7 +137,7 @@ function test_shutdown() public
 #### Running Tests
 ```bash
 # Run shutdown tests
-forge test --match-contract YieldDonatingShutdown -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingShutdown -vv --fork-url $RPC_URL
 ```
 
 #### Expected Results
@@ -160,7 +160,7 @@ function test_rewardDistribution() public
 #### Running Tests
 ```bash
 # Run SecurityRouter tests
-forge test --match-contract YieldDonatingSecurityRouter -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingSecurityRouter -vv --fork-url $RPC_URL
 ```
 
 ## Test Utilities
@@ -238,19 +238,19 @@ make trace
 make test-contract contract=YieldDonatingBugBountyFlow
 
 # Run with gas reporting
-forge test --gas-report --fork-url $ETH_RPC_URL
+forge test --gas-report --fork-url $RPC_URL
 ```
 
 ### Manual Commands
 ```bash
 # All tests with fork
-forge test --fork-url $ETH_RPC_URL
+forge test --fork-url $RPC_URL
 
 # Specific test with verbose output
-forge test --match-test test_completeBugBountyFlow -vvv --fork-url $ETH_RPC_URL
+forge test --match-test test_completeBugBountyFlow -vvv --fork-url $RPC_URL
 
 # Gas profiling
-forge test --gas-report --match-contract YieldDonatingBugBountyFlow --fork-url $ETH_RPC_URL
+forge test --gas-report --match-contract YieldDonatingBugBountyFlow --fork-url $RPC_URL
 ```
 
 ## Test Data Analysis
@@ -292,7 +292,7 @@ SecurityRouter Performance:
 forge test --fork-url https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
 
 # Check environment variables
-echo $ETH_RPC_URL
+echo $RPC_URL
 ```
 
 #### "!keeper" or "!cantina" errors
@@ -342,18 +342,18 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
       - name: Run tests
-        run: forge test --fork-url ${{ secrets.ETH_RPC_URL }}
+        run: forge test --fork-url ${{ secrets.RPC_URL }}
         env:
-          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+          RPC_URL: ${{ secrets.RPC_URL }}
 ```
 
 ### Test Coverage
 ```bash
 # Generate coverage report
-forge coverage --fork-url $ETH_RPC_URL
+forge coverage --fork-url $RPC_URL
 
 # Coverage with specific contracts
-forge coverage --match-contract YieldDonatingStrategy --fork-url $ETH_RPC_URL
+forge coverage --match-contract YieldDonatingStrategy --fork-url $RPC_URL
 ```
 
 ## Security Testing

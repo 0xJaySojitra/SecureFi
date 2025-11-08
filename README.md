@@ -45,7 +45,7 @@ TEST_ASSET_ADDRESS=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  # USDC on mainnet
 TEST_YIELD_SOURCE=0x28B3a8fb53B741A8Fd78c0fb9A6B2393d896a43d   # Spark Vault address
 
 # RPC URLs (Required for fork testing)
-ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_API_KEY
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_API_KEY
 ```
 
 3. Get your Alchemy API key from [alchemy.com](https://alchemy.com) for mainnet forking
@@ -100,9 +100,9 @@ finalPayout = min(severityBasedPayout, proportionalCap, maxPerIssue);
 make test
 
 # Run specific test suites
-forge test --match-contract YieldDonatingOperation -vv --fork-url $ETH_RPC_URL
-forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $ETH_RPC_URL
-forge test --match-contract YieldDonatingShutdown -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingOperation -vv --fork-url $RPC_URL
+forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $RPC_URL
+forge test --match-contract YieldDonatingShutdown -vv --fork-url $RPC_URL
 ```
 
 ### Test Suites Overview

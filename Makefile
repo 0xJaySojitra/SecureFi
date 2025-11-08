@@ -10,7 +10,7 @@ inspect :; forge inspect ${contract} storageLayout
 
 # specify which fork to use. set this in our .env
 # if we want to test multiple forks in one go, remove this as an argument below
-FORK_URL := $(shell grep '^ETH_RPC_URL=' .env | cut -d '=' -f2-)
+FORK_URL := $(shell grep '^RPC_URL=' .env | cut -d '=' -f2-)
 
 # if we want to run only matching tests, set that here
 test := test_

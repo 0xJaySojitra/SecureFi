@@ -41,13 +41,13 @@ contract DeployWithFactory is Script {
     function run() external {
         console2.log("=== DEPLOYING WITH FACTORY ===");
         console2.log("Network:", block.chainid);
-        console2.log("Deployer:", msg.sender);
         
         // Get configuration from environment
         DeploymentConfig memory config = getDeploymentConfig();
         validateConfig(config);
         
-        vm.startBroadcast();
+        // Start broadcast with private key from environment
+        vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
         
         // Step 1: Deploy SecurityRouter first
         console2.log("\n=== STEP 1: DEPLOYING SECURITY ROUTER ===");

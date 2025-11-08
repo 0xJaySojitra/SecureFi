@@ -15,7 +15,7 @@ cp .env.example .env
 # Edit .env file
 TEST_ASSET_ADDRESS=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  # USDC
 TEST_YIELD_SOURCE=0x28B3a8fb53B741A8Fd78c0fb9A6B2393d896a43d   # Spark Vault
-ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
 ```
 
 ### 3. Run Tests
@@ -24,7 +24,7 @@ ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
 make test
 
 # Run specific test suite
-forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingBugBountyFlow -vv --fork-url $RPC_URL
 ```
 
 ## 📋 Key Commands
@@ -38,10 +38,10 @@ make test
 make trace
 
 # Specific contract
-forge test --match-contract YieldDonatingOperation -vv --fork-url $ETH_RPC_URL
+forge test --match-contract YieldDonatingOperation -vv --fork-url $RPC_URL
 
 # Gas report
-forge test --gas-report --fork-url $ETH_RPC_URL
+forge test --gas-report --fork-url $RPC_URL
 ```
 
 ### Deployment (Testnet)
@@ -115,7 +115,7 @@ SPARK_VAULT = 0x28B3a8fb53B741A8Fd78c0fb9A6B2393d896a43d
 ## ❓ Need Help?
 
 1. **Check the logs**: Use `-vv` or `-vvv` for detailed output
-2. **Verify environment**: Ensure `ETH_RPC_URL` is set correctly
+2. **Verify environment**: Ensure `RPC_URL` is set correctly
 3. **Check documentation**: Detailed guides in `/docs` folder
 4. **Common issues**: See [Testing.md](Testing.md#debugging-common-issues)
 

@@ -46,11 +46,11 @@ contract DeployYieldDonatingStrategy is Script {
         
         console2.log("=== STARTING DEPLOYMENT ===");
         console2.log("Network:", block.chainid);
-        console2.log("Deployer:", msg.sender);
         console2.log("USDC:", USDC);
         console2.log("Spark Vault:", SPARK_VAULT);
         
-        vm.startBroadcast();
+        // Start broadcast with private key from environment
+        vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
         
         // Step 1: Deploy SecurityRouter first (no dependencies)
         console2.log("\n=== STEP 1: DEPLOYING SECURITY ROUTER ===");
